@@ -4,6 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.config import get_settings
 from app.api.auth import router as auth_router
 from app.api.process import router as process_router
+from app.api.search import router as search_router
 
 app = FastAPI(
     title="Atlantis Plus API",
@@ -44,6 +45,7 @@ async def root():
 # Include routers
 app.include_router(auth_router)
 app.include_router(process_router)
+app.include_router(search_router)
 
 
 if __name__ == "__main__":

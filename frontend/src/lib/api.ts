@@ -120,6 +120,23 @@ class ApiClient {
   }> {
     return this.request(`/process/status/${evidenceId}`);
   }
+
+  async search(query: string): Promise<{
+    query: string;
+    results: Array<{
+      person_id: string;
+      display_name: string;
+      relevance_score: number;
+      reasoning: string;
+      matching_facts: string[];
+    }>;
+    reasoning_summary: string;
+  }> {
+    return this.request('/search', {
+      method: 'POST',
+      body: JSON.stringify({ query })
+    });
+  }
 }
 
 export const api = new ApiClient();

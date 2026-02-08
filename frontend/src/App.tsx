@@ -3,6 +3,8 @@ import { initTelegram, isTelegramMiniApp } from './lib/telegram';
 import { useAuth } from './hooks/useAuth';
 import { HomePage } from './pages/HomePage';
 import { NotesPage } from './pages/NotesPage';
+import { PeoplePage } from './pages/PeoplePage';
+import { SearchPage } from './pages/SearchPage';
 import './App.css';
 
 type Page = 'home' | 'notes' | 'search' | 'people';
@@ -29,6 +31,10 @@ function App() {
     switch (currentPage) {
       case 'notes':
         return <NotesPage />;
+      case 'people':
+        return <PeoplePage />;
+      case 'search':
+        return <SearchPage />;
       case 'home':
       default:
         return <HomePage onNavigate={setCurrentPage} />;
@@ -59,7 +65,6 @@ function App() {
           <button
             className={`nav-btn ${currentPage === 'search' ? 'active' : ''}`}
             onClick={() => setCurrentPage('search')}
-            disabled
           >
             <span className="nav-icon">🔍</span>
             <span className="nav-label">Search</span>
@@ -67,7 +72,6 @@ function App() {
           <button
             className={`nav-btn ${currentPage === 'people' ? 'active' : ''}`}
             onClick={() => setCurrentPage('people')}
-            disabled
           >
             <span className="nav-icon">👥</span>
             <span className="nav-label">People</span>
