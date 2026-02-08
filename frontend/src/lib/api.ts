@@ -137,6 +137,43 @@ class ApiClient {
       body: JSON.stringify({ query })
     });
   }
+
+  async chat(message: string, sessionId?: string): Promise<{
+    session_id: string;
+    message: string;
+    tool_results?: Array<{
+      tool: string;
+      args: Record<string, unknown>;
+      result: string;
+    }>;
+  }> {
+    return this.request('/chat', {
+      method: 'POST',
+      body: JSON.stringify({ message, session_id: sessionId })
+    }, 60000); // 60s timeout for chat
+  }
+
+  async getChatSessions(): Promise<{
+    sessions: Array<{
+      session_id: string;
+      title: string;
+      created_at: string;
+      updated_at: string;
+    }>;
+  }> {
+    return this.request('/chat/sessions');
+  }
+
+  async getChatMessages(sessionId: string): Promise<{
+    messages: Array<{
+      message_id: string;
+      role: string;
+      content: string;
+      created_at: string;
+    }>;
+  }> {
+    return this.request(`/chat/sessions/${sessionId}/messages`);
+  }
 }
 
 export const api = new ApiClient();

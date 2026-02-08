@@ -5,9 +5,10 @@ import { HomePage } from './pages/HomePage';
 import { NotesPage } from './pages/NotesPage';
 import { PeoplePage } from './pages/PeoplePage';
 import { SearchPage } from './pages/SearchPage';
+import { ChatPage } from './pages/ChatPage';
 import './App.css';
 
-type Page = 'home' | 'notes' | 'search' | 'people';
+type Page = 'home' | 'notes' | 'search' | 'people' | 'chat';
 
 function App() {
   const [currentPage, setCurrentPage] = useState<Page>('home');
@@ -35,6 +36,8 @@ function App() {
         return <PeoplePage />;
       case 'search':
         return <SearchPage />;
+      case 'chat':
+        return <ChatPage />;
       case 'home':
       default:
         return <HomePage onNavigate={setCurrentPage} />;
@@ -63,11 +66,11 @@ function App() {
             <span className="nav-label">Notes</span>
           </button>
           <button
-            className={`nav-btn ${currentPage === 'search' ? 'active' : ''}`}
-            onClick={() => setCurrentPage('search')}
+            className={`nav-btn ${currentPage === 'chat' ? 'active' : ''}`}
+            onClick={() => setCurrentPage('chat')}
           >
-            <span className="nav-icon">🔍</span>
-            <span className="nav-label">Search</span>
+            <span className="nav-icon">💬</span>
+            <span className="nav-label">Chat</span>
           </button>
           <button
             className={`nav-btn ${currentPage === 'people' ? 'active' : ''}`}
