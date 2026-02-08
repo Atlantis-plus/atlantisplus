@@ -1,0 +1,23 @@
+# FastAPI
+fastapi==0.109.2
+uvicorn[standard]==0.27.1
+python-multipart==0.0.9
+
+# Supabase
+supabase==2.3.4
+
+# OpenAI
+openai==1.12.0
+
+# JWT validation
+python-jose[cryptography]==3.3.0
+
+# Environment
+python-dotenv==1.0.1
+
+# HTTP client
+httpx>=0.24,<0.26
+
+# Pydantic
+pydantic==2.6.1
+pydantic-settings==2.1.0
