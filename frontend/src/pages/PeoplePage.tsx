@@ -90,14 +90,19 @@ export const PeoplePage = () => {
       'expertise': 'Экспертиза',
       'strong_at': 'Силён в',
       'can_help_with': 'Может помочь с',
+      'worked_on': 'Работал над',
       'location': 'Локация',
       'located_in': 'Локация',
       'background': 'Бэкграунд',
+      'speaks_language': 'Языки',
       'notable_achievement': 'Достижение',
-      'contact_context': 'Контекст знакомства',
+      'contact_context': 'Откуда знаю',
+      'relationship_depth': 'Опыт вместе',
+      'recommend_for': '✓ Рекомендую для',
+      'not_recommend_for': '✗ Не рекомендую для',
       'reputation_note': 'Репутация',
       'interested_in': 'Интересуется',
-      'years_in_location': 'Лет в локации'
+      'note': 'Заметка'
     };
     return labels[predicate] || predicate;
   };
