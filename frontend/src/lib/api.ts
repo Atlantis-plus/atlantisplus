@@ -249,6 +249,88 @@ class ApiClient {
 
     return response.json();
   }
+
+  async previewCalendarImport(file: File, ownerEmail?: string): Promise<{
+    total_events: number;
+    events_with_attendees: number;
+    unique_attendees: number;
+    date_range: string;
+    top_attendees: Array<{
+      email: string;
+      name: string | null;
+      meeting_count: number;
+    }>;
+    sample_events: Array<{
+      summary: string;
+      date: string;
+      attendee_count: number;
+      attendees: string[];
+    }>;
+  }> {
+    const formData = new FormData();
+    formData.append('file', file);
+    if (ownerEmail) {
+      formData.append('owner_email', ownerEmail);
+    }
+
+    const headers: Record<string, string> = {};
+    if (this.accessToken) {
+      headers['Authorization'] = `Bearer ${this.accessToken}`;
+    }
+
+    const url = ownerEmail
+      ? `${API_URL}/import/calendar/preview?owner_email=${encodeURIComponent(ownerEmail)}`
+      : `${API_URL}/import/calendar/preview`;
+
+    const response = await fetch(url, {
+      method: 'POST',
+      headers,
+      body: formData,
+      mode: 'cors',
+      credentials: 'omit'
+    });
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ detail: 'Unknown error' }));
+      throw new Error(error.detail || `HTTP ${response.status}`);
+    }
+
+    return response.json();
+  }
+
+  async importCalendar(file: File, ownerEmail?: string): Promise<{
+    imported_people: number;
+    imported_meetings: number;
+    skipped_duplicates: number;
+    updated_existing: number;
+  }> {
+    const formData = new FormData();
+    formData.append('file', file);
+
+    const headers: Record<string, string> = {};
+    if (this.accessToken) {
+      headers['Authorization'] = `Bearer ${this.accessToken}`;
+    }
+
+    const url = ownerEmail
+      ? `${API_URL}/import/calendar?owner_email=${encodeURIComponent(ownerEmail)}`
+      : `${API_URL}/import/calendar`;
+
+    const response = await fetch(url, {
+      method: 'POST',
+      headers,
+      body: formData,
+      mode: 'cors',
+      credentials: 'omit'
+    });
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ detail: 'Unknown error' }));
+      throw new Error(error.detail || `HTTP ${response.status}`);
+    }
+
+    return response.json();
+  }
 }
 
 export const api = new ApiClient();

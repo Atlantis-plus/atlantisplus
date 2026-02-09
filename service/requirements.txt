@@ -27,3 +27,4 @@ pydantic-settings==2.1.0
 
 # Telegram Bot
 python-telegram-bot==21.0.1
+icalendar>=5.0.0

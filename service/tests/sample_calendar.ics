@@ -1,0 +1,62 @@
+BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//Google Inc//Google Calendar 70.9054//EN
+X-WR-CALNAME:Test Calendar
+BEGIN:VEVENT
+DTSTART:20240115T100000Z
+DTEND:20240115T110000Z
+DTSTAMP:20240115T080000Z
+UID:event1@google.com
+SUMMARY:Product Review Meeting
+DESCRIPTION:Quarterly product review with the team
+ORGANIZER;CN=John Smith:mailto:john.smith@company.com
+ATTENDEE;CN=Alice Johnson;PARTSTAT=ACCEPTED:mailto:alice.johnson@company.com
+ATTENDEE;CN=Bob Wilson;PARTSTAT=TENTATIVE:mailto:bob.wilson@partner.com
+ATTENDEE;CN=Carol Davis;PARTSTAT=NEEDS-ACTION:mailto:carol@startup.io
+LOCATION:Conference Room A
+END:VEVENT
+BEGIN:VEVENT
+DTSTART:20240220T140000Z
+DTEND:20240220T150000Z
+DTSTAMP:20240220T080000Z
+UID:event2@google.com
+SUMMARY:Investor Call
+DESCRIPTION:Follow-up call with potential investors
+ORGANIZER;CN=John Smith:mailto:john.smith@company.com
+ATTENDEE;CN=David Lee;PARTSTAT=ACCEPTED:mailto:david.lee@vcfund.com
+ATTENDEE;CN=Emma Brown;PARTSTAT=ACCEPTED:mailto:emma@angelinvestor.net
+LOCATION:Zoom
+END:VEVENT
+BEGIN:VEVENT
+DTSTART:20240305T090000Z
+DTEND:20240305T100000Z
+DTSTAMP:20240305T080000Z
+UID:event3@google.com
+SUMMARY:Coffee with Alice
+DESCRIPTION:Catch up about new project ideas
+ORGANIZER;CN=John Smith:mailto:john.smith@company.com
+ATTENDEE;CN=Alice Johnson;PARTSTAT=ACCEPTED:mailto:alice.johnson@company.com
+LOCATION:Starbucks Downtown
+END:VEVENT
+BEGIN:VEVENT
+DTSTART:20240410T160000Z
+DTEND:20240410T170000Z
+DTSTAMP:20240410T080000Z
+UID:event4@google.com
+SUMMARY:Team Standup
+DESCRIPTION:Daily standup - no external attendees
+END:VEVENT
+BEGIN:VEVENT
+DTSTART:20230601T110000Z
+DTEND:20230601T120000Z
+DTSTAMP:20230601T080000Z
+UID:event5@google.com
+SUMMARY:Conference Panel - AI in Healthcare
+DESCRIPTION:Speaking panel at TechConf 2023
+ORGANIZER;CN=Conference Org:mailto:events@techconf.com
+ATTENDEE;CN=John Smith;PARTSTAT=ACCEPTED:mailto:john.smith@company.com
+ATTENDEE;CN=Dr. Sarah Chen;PARTSTAT=ACCEPTED:mailto:sarah.chen@hospital.org
+ATTENDEE;CN=Mike Peters;PARTSTAT=ACCEPTED:mailto:mike@healthtech.ai
+LOCATION:Convention Center Hall B
+END:VEVENT
+END:VCALENDAR

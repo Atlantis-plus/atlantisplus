@@ -11,6 +11,7 @@ from app.api.questions import router as questions_router
 from app.api.dedup import router as dedup_router
 from app.api.enrichment import router as enrichment_router
 from app.api.import_linkedin import router as import_router
+from app.api.import_calendar import router as import_calendar_router
 from app.telegram_bot.bot import handle_telegram_update, initialize_bot, shutdown_bot
 
 app = FastAPI(
@@ -102,6 +103,7 @@ app.include_router(questions_router)
 app.include_router(dedup_router)
 app.include_router(enrichment_router)
 app.include_router(import_router)
+app.include_router(import_calendar_router)
 
 
 if __name__ == "__main__":
