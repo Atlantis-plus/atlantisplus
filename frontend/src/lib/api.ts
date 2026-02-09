@@ -174,6 +174,81 @@ class ApiClient {
   }> {
     return this.request(`/chat/sessions/${sessionId}/messages`);
   }
+
+  async previewLinkedInImport(file: File): Promise<{
+    total_contacts: number;
+    with_email: number;
+    without_email: number;
+    sample: Array<{
+      first_name: string;
+      last_name: string;
+      email: string | null;
+      company: string | null;
+      position: string | null;
+      connected_on: string | null;
+    }>;
+  }> {
+    const formData = new FormData();
+    formData.append('file', file);
+
+    const headers: Record<string, string> = {};
+    if (this.accessToken) {
+      headers['Authorization'] = `Bearer ${this.accessToken}`;
+    }
+
+    const response = await fetch(`${API_URL}/import/linkedin/preview`, {
+      method: 'POST',
+      headers,
+      body: formData,
+      mode: 'cors',
+      credentials: 'omit'
+    });
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ detail: 'Unknown error' }));
+      throw new Error(error.detail || `HTTP ${response.status}`);
+    }
+
+    return response.json();
+  }
+
+  async importLinkedIn(file: File, skipDuplicates: boolean = true): Promise<{
+    imported: number;
+    skipped: number;
+    duplicates_found: number;
+    details: Array<{
+      name: string;
+      status: string;
+      reason?: string;
+      company?: string;
+      position?: string;
+    }>;
+  }> {
+    const formData = new FormData();
+    formData.append('file', file);
+
+    const headers: Record<string, string> = {};
+    if (this.accessToken) {
+      headers['Authorization'] = `Bearer ${this.accessToken}`;
+    }
+
+    const url = `${API_URL}/import/linkedin?skip_duplicates=${skipDuplicates}`;
+
+    const response = await fetch(url, {
+      method: 'POST',
+      headers,
+      body: formData,
+      mode: 'cors',
+      credentials: 'omit'
+    });
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ detail: 'Unknown error' }));
+      throw new Error(error.detail || `HTTP ${response.status}`);
+    }
+
+    return response.json();
+  }
 }
 
 export const api = new ApiClient();
