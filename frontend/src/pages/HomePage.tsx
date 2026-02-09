@@ -1,6 +1,7 @@
 import { useState, useRef } from 'react';
 import { useAuth } from '../hooks/useAuth';
 import { api } from '../lib/api';
+import { openExternalLink } from '../lib/telegram';
 
 type Page = 'home' | 'notes' | 'search' | 'people' | 'chat';
 
@@ -131,7 +132,18 @@ export const HomePage = ({ onNavigate }: HomePageProps) => {
               <div className="import-instructions">
                 <p>To export your LinkedIn connections:</p>
                 <ol>
-                  <li>Go to LinkedIn Settings</li>
+                  <li>
+                    <a
+                      href="#"
+                      onClick={(e) => {
+                        e.preventDefault();
+                        openExternalLink('https://www.linkedin.com/mypreferences/d/download-my-data');
+                      }}
+                      className="external-link"
+                    >
+                      Open LinkedIn Settings
+                    </a>
+                  </li>
                   <li>Click "Get a copy of your data"</li>
                   <li>Select "Connections"</li>
                   <li>Download and upload here</li>

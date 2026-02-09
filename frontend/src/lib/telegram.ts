@@ -28,3 +28,11 @@ export const showTelegramAlert = (message: string) => {
 export const isTelegramMiniApp = (): boolean => {
   return !!WebApp.initData;
 };
+
+export const openExternalLink = (url: string) => {
+  if (isTelegramMiniApp()) {
+    WebApp.openLink(url);
+  } else {
+    window.open(url, '_blank');
+  }
+};

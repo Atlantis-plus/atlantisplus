@@ -1144,6 +1144,16 @@
   margin-bottom: 0.25rem;
 }
 
+.external-link {
+  color: var(--tg-theme-link-color, #2481cc);
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.external-link:hover {
+  opacity: 0.8;
+}
+
 .file-upload {
   text-align: center;
 }
