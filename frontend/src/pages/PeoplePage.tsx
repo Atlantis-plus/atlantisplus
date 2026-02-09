@@ -84,25 +84,25 @@ export const PeoplePage = () => {
 
   const formatPredicate = (predicate: string): string => {
     const labels: Record<string, string> = {
-      'role': 'Роль',
-      'role_is': 'Роль',
-      'works_at': 'Работает в',
-      'expertise': 'Экспертиза',
-      'strong_at': 'Силён в',
-      'can_help_with': 'Может помочь с',
-      'worked_on': 'Работал над',
-      'location': 'Локация',
-      'located_in': 'Локация',
-      'background': 'Бэкграунд',
-      'speaks_language': 'Языки',
-      'notable_achievement': 'Достижение',
-      'contact_context': 'Откуда знаю',
-      'relationship_depth': 'Опыт вместе',
-      'recommend_for': '✓ Рекомендую для',
-      'not_recommend_for': '✗ Не рекомендую для',
-      'reputation_note': 'Репутация',
-      'interested_in': 'Интересуется',
-      'note': 'Заметка'
+      'role': 'Role',
+      'role_is': 'Role',
+      'works_at': 'Works at',
+      'expertise': 'Expertise',
+      'strong_at': 'Strong at',
+      'can_help_with': 'Can help with',
+      'worked_on': 'Worked on',
+      'location': 'Location',
+      'located_in': 'Location',
+      'background': 'Background',
+      'speaks_language': 'Languages',
+      'notable_achievement': 'Achievement',
+      'contact_context': 'How we met',
+      'relationship_depth': 'Relationship',
+      'recommend_for': '✓ Recommended for',
+      'not_recommend_for': '✗ Not recommended for',
+      'reputation_note': 'Reputation',
+      'interested_in': 'Interested in',
+      'note': 'Note'
     };
     return labels[predicate] || predicate;
   };
@@ -122,7 +122,7 @@ export const PeoplePage = () => {
     return (
       <div className="page">
         <header className="header">
-          <button className="back-btn" onClick={handleBack}>← Назад</button>
+          <button className="back-btn" onClick={handleBack}>← Back</button>
           <h1>
             {selectedPerson.display_name}
             {!isOwnPerson && <span className="shared-badge">Shared</span>}
@@ -132,7 +132,7 @@ export const PeoplePage = () => {
         <main className="main">
           {!isOwnPerson && (
             <div className="shared-notice">
-              Контакт добавлен другим пользователем (только просмотр)
+              Contact added by another user (read-only)
             </div>
           )}
           {selectedPerson.summary && (
@@ -140,9 +140,9 @@ export const PeoplePage = () => {
           )}
 
           <div className="assertions-section">
-            <h3>Известные факты</h3>
+            <h3>Known Facts</h3>
             {assertions.length === 0 ? (
-              <p className="empty-state">Нет данных</p>
+              <p className="empty-state">No data</p>
             ) : (
               <ul className="assertions-list">
                 {assertions.map((a) => (
@@ -164,7 +164,7 @@ export const PeoplePage = () => {
     <div className="page">
       <header className="header">
         <h1>People</h1>
-        <p className="subtitle">{ownPeople.length} своих · {sharedPeople.length} shared</p>
+        <p className="subtitle">{ownPeople.length} own · {sharedPeople.length} shared</p>
       </header>
 
       <main className="main">
@@ -174,7 +174,7 @@ export const PeoplePage = () => {
             className={`mode-btn ${activeTab === 'own' ? 'active' : ''}`}
             onClick={() => setActiveTab('own')}
           >
-            Мои ({ownPeople.length})
+            Mine ({ownPeople.length})
           </button>
           <button
             className={`mode-btn ${activeTab === 'shared' ? 'active' : ''}`}
@@ -187,21 +187,21 @@ export const PeoplePage = () => {
         <div className="search-box">
           <input
             type="text"
-            placeholder="Поиск по имени..."
+            placeholder="Search by name..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
           />
         </div>
 
         {loading ? (
-          <div className="loading">Загрузка...</div>
+          <div className="loading">Loading...</div>
         ) : filteredPeople.length === 0 ? (
           <div className="empty-state">
             {searchQuery
-              ? 'Никого не найдено'
+              ? 'No one found'
               : activeTab === 'own'
-                ? 'Пока нет людей. Добавьте заметку!'
-                : 'Нет shared контактов от других пользователей'}
+                ? 'No people yet. Add a note!'
+                : 'No shared contacts from other users'}
           </div>
         ) : (
           <ul className="people-list">

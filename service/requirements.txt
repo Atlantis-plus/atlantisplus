@@ -4,7 +4,7 @@ uvicorn[standard]==0.27.1
 python-multipart==0.0.9
 
 # Supabase
-supabase==2.3.4
+supabase>=2.10.0
 
 # OpenAI
 openai==1.12.0
@@ -16,8 +16,14 @@ python-jose[cryptography]==3.3.0
 python-dotenv==1.0.1
 
 # HTTP client
-httpx>=0.24,<0.26
+httpx>=0.24,<0.28
+
+# Websockets (for supabase realtime)
+websockets>=15.0
 
 # Pydantic
 pydantic==2.6.1
 pydantic-settings==2.1.0
+
+# Telegram Bot
+python-telegram-bot==21.0.1

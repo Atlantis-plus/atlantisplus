@@ -47,9 +47,9 @@ export const SearchPage = () => {
   };
 
   const exampleQueries = [
-    'Кто может помочь с AI?',
-    'Кто работает в Долине?',
-    'Кого знаю из предпринимателей?'
+    'Who can help with AI?',
+    'Who works in the Valley?',
+    'Who do I know in entrepreneurship?'
   ];
 
   if (!isAuthenticated) {
@@ -64,14 +64,14 @@ export const SearchPage = () => {
     <div className="page">
       <header className="header">
         <h1>Search</h1>
-        <p className="subtitle">Найди нужного человека в своей сети</p>
+        <p className="subtitle">Find the right person in your network</p>
       </header>
 
       <main className="main">
         <div className="search-input-container">
           <input
             type="text"
-            placeholder="Кто может помочь с...?"
+            placeholder="Who can help with...?"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             onKeyPress={handleKeyPress}
@@ -88,7 +88,7 @@ export const SearchPage = () => {
 
         {!results && !searching && !error && (
           <div className="example-queries">
-            <p className="examples-label">Примеры запросов:</p>
+            <p className="examples-label">Example queries:</p>
             {exampleQueries.map((eq, i) => (
               <button
                 key={i}
@@ -111,7 +111,7 @@ export const SearchPage = () => {
         {searching && (
           <div className="searching">
             <div className="spinner"></div>
-            <p>Ищу в твоей сети...</p>
+            <p>Searching your network...</p>
           </div>
         )}
 
@@ -125,8 +125,8 @@ export const SearchPage = () => {
 
             {results.results.length === 0 ? (
               <div className="no-results">
-                <p>Никого не нашёл по этому запросу.</p>
-                <p className="hint">Попробуй переформулировать или добавь больше заметок о людях.</p>
+                <p>No one found for this query.</p>
+                <p className="hint">Try rephrasing or add more notes about people.</p>
               </div>
             ) : (
               <ul className="results-list">
@@ -139,7 +139,7 @@ export const SearchPage = () => {
                       <div className="result-name-container">
                         <span className="result-name">{result.display_name}</span>
                         <span className="relevance-badge">
-                          {Math.round(result.relevance_score * 100)}% релевантность
+                          {Math.round(result.relevance_score * 100)}% relevance
                         </span>
                       </div>
                     </div>

@@ -14,9 +14,21 @@ class Settings(BaseSettings):
 
     # Telegram
     telegram_bot_token: str
+    telegram_webhook_secret: str = ""  # Optional: for webhook verification
 
     # Environment
     environment: str = "development"
+
+    # People Data Labs (enrichment)
+    pdl_api_key: str = ""
+    pdl_monthly_limit: int = 100
+    pdl_daily_limit: int = 5
+
+    # Proactive questions
+    questions_max_per_day: int = 3
+    questions_cooldown_hours: int = 1
+    questions_pause_days_after_dismisses: int = 7
+    questions_max_consecutive_dismisses: int = 3
 
     class Config:
         env_file = ".env"

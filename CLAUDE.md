@@ -5,6 +5,23 @@
 
 ---
 
+## CRITICAL RULE: Interface Language
+
+**ALL user-facing interfaces MUST be in English:**
+- Telegram bot messages (commands, responses, errors)
+- Mini App UI (buttons, labels, placeholders, navigation)
+- API error messages shown to users
+- Loading states, success/error notifications
+
+**User content in database stays as-is:**
+- Transcripts (Russian or any language)
+- Person names, assertions, notes
+- Evidence content
+
+**Code/comments can be in English or Russian.**
+
+---
+
 ## Что мы строим (одним абзацем)
 
 **AI-first Personal Network Memory** — приватный агент, который помогает power-коннекторам помнить свой нетворк и находить нужных людей под конкретные задачи. Пользователь надиктовывает или пишет заметки о людях, которых знает. Агент извлекает структурированные данные (люди, связи, компетенции, контекст), сохраняет в граф, и потом отвечает на вопросы вроде «кто может помочь с выходом на фарм-компании в Сингапуре?» — с reasoning, а не просто списком.
@@ -755,6 +772,76 @@ supabase migration list
 ### Storage buckets
 - Создавать через SQL миграции (CLI не поддерживает create bucket)
 - RLS политики: `storage.foldername(name))[1]` для user-scoped доступа
+
+---
+
+## Deployment Commands
+
+### Python Service (Railway)
+```bash
+# Railway Project: heartfelt-flexibility
+# Service: atlantisplus
+# URL: https://atlantisplus-production.up.railway.app
+
+# Деплой на Railway (из папки service/)
+cd /Users/evgenyq/Projects/atlantisplus/service
+railway up
+
+# Посмотреть логи
+railway logs
+
+# Посмотреть статус
+railway status
+
+# Открыть dashboard
+railway open
+
+# Переменные окружения (установлены в Railway Dashboard):
+# - SUPABASE_URL=https://mhdpokigbprnnwmsgzuy.supabase.co
+# - SUPABASE_SERVICE_ROLE_KEY, SUPABASE_ANON_KEY, SUPABASE_JWT_SECRET
+# - OPENAI_API_KEY
+# - TELEGRAM_BOT_TOKEN
+# - PDL_API_KEY (опционально, для People Data Labs enrichment)
+```
+
+### Frontend (GitHub Pages)
+```bash
+# GitHub repo: evgenyq/atlantisplus
+# URL: https://evgenyq.github.io/atlantisplus/
+
+# Из папки frontend/
+cd /Users/evgenyq/Projects/atlantisplus/frontend
+npm run build
+npm run deploy  # или gh-pages -d dist
+
+# VITE_API_URL должен указывать на Railway:
+# Production: https://atlantisplus-production.up.railway.app
+# Local dev: http://localhost:8000
+```
+
+### Supabase
+```bash
+# Project Reference: mhdpokigbprnnwmsgzuy
+# URL: https://mhdpokigbprnnwmsgzuy.supabase.co
+# Dashboard: https://supabase.com/dashboard/project/mhdpokigbprnnwmsgzuy
+
+# Применить миграции
+supabase db push
+
+# Список миграций
+supabase migration list
+```
+
+### Telegram Bot
+```
+Bot: @atlantisplus_bot
+Mini App URL: https://evgenyq.github.io/atlantisplus/
+
+Настройка в BotFather:
+1. /mybots → @atlantisplus_bot
+2. Bot Settings → Menu Button → Configure
+3. URL: https://evgenyq.github.io/atlantisplus/
+```
 
 ---
 
