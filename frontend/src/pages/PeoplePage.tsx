@@ -7,7 +7,10 @@ interface Person {
   display_name: string;
   summary: string | null;
   created_at: string;
+  owner_id: string;
 }
+
+type TabType = 'own' | 'shared';
 
 interface Assertion {
   assertion_id: string;
@@ -17,12 +20,15 @@ interface Assertion {
 }
 
 export const PeoplePage = () => {
-  const { isAuthenticated } = useAuth();
+  const { isAuthenticated, session } = useAuth();
   const [people, setPeople] = useState<Person[]>([]);
   const [selectedPerson, setSelectedPerson] = useState<Person | null>(null);
   const [assertions, setAssertions] = useState<Assertion[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
+  const [activeTab, setActiveTab] = useState<TabType>('own');
+
+  const currentUserId = session?.user?.id;
 
   useEffect(() => {
     if (isAuthenticated) {
@@ -34,7 +40,7 @@ export const PeoplePage = () => {
     setLoading(true);
     const { data, error } = await supabase
       .from('person')
-      .select('person_id, display_name, summary, created_at')
+      .select('person_id, display_name, summary, created_at, owner_id')
       .eq('status', 'active')
       .order('created_at', { ascending: false });
 
@@ -66,7 +72,13 @@ export const PeoplePage = () => {
     setAssertions([]);
   };
 
-  const filteredPeople = people.filter(p =>
+  // Split people into own and shared
+  const ownPeople = people.filter(p => p.owner_id === currentUserId);
+  const sharedPeople = people.filter(p => p.owner_id !== currentUserId);
+
+  // Apply search filter and tab selection
+  const displayPeople = activeTab === 'own' ? ownPeople : sharedPeople;
+  const filteredPeople = displayPeople.filter(p =>
     p.display_name.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
@@ -100,14 +112,24 @@ export const PeoplePage = () => {
 
   // Person detail view
   if (selectedPerson) {
+    const isOwnPerson = selectedPerson.owner_id === currentUserId;
+
     return (
       <div className="page">
         <header className="header">
           <button className="back-btn" onClick={handleBack}>← Назад</button>
-          <h1>{selectedPerson.display_name}</h1>
+          <h1>
+            {selectedPerson.display_name}
+            {!isOwnPerson && <span className="shared-badge">Shared</span>}
+          </h1>
         </header>
 
         <main className="main">
+          {!isOwnPerson && (
+            <div className="shared-notice">
+              Контакт добавлен другим пользователем (только просмотр)
+            </div>
+          )}
           {selectedPerson.summary && (
             <p className="person-summary">{selectedPerson.summary}</p>
           )}
@@ -137,10 +159,26 @@ export const PeoplePage = () => {
     <div className="page">
       <header className="header">
         <h1>People</h1>
-        <p className="subtitle">{people.length} человек в сети</p>
+        <p className="subtitle">{ownPeople.length} своих · {sharedPeople.length} shared</p>
       </header>
 
       <main className="main">
+        {/* Tabs */}
+        <div className="mode-switcher">
+          <button
+            className={`mode-btn ${activeTab === 'own' ? 'active' : ''}`}
+            onClick={() => setActiveTab('own')}
+          >
+            Мои ({ownPeople.length})
+          </button>
+          <button
+            className={`mode-btn ${activeTab === 'shared' ? 'active' : ''}`}
+            onClick={() => setActiveTab('shared')}
+          >
+            Shared ({sharedPeople.length})
+          </button>
+        </div>
+
         <div className="search-box">
           <input
             type="text"
@@ -154,30 +192,40 @@ export const PeoplePage = () => {
           <div className="loading">Загрузка...</div>
         ) : filteredPeople.length === 0 ? (
           <div className="empty-state">
-            {searchQuery ? 'Никого не найдено' : 'Пока нет людей. Добавьте заметку!'}
+            {searchQuery
+              ? 'Никого не найдено'
+              : activeTab === 'own'
+                ? 'Пока нет людей. Добавьте заметку!'
+                : 'Нет shared контактов от других пользователей'}
           </div>
         ) : (
           <ul className="people-list">
-            {filteredPeople.map((person) => (
-              <li
-                key={person.person_id}
-                className="person-card"
-                onClick={() => handlePersonClick(person)}
-              >
-                <div className="person-avatar">
-                  {person.display_name.charAt(0).toUpperCase()}
-                </div>
-                <div className="person-info">
-                  <span className="person-name">{person.display_name}</span>
-                  {person.summary && (
-                    <span className="person-summary-preview">
-                      {person.summary.slice(0, 60)}...
+            {filteredPeople.map((person) => {
+              const isOwn = person.owner_id === currentUserId;
+              return (
+                <li
+                  key={person.person_id}
+                  className={`person-card ${!isOwn ? 'shared' : ''}`}
+                  onClick={() => handlePersonClick(person)}
+                >
+                  <div className={`person-avatar ${!isOwn ? 'shared' : ''}`}>
+                    {person.display_name.charAt(0).toUpperCase()}
+                  </div>
+                  <div className="person-info">
+                    <span className="person-name">
+                      {person.display_name}
+                      {!isOwn && <span className="shared-badge">Shared</span>}
                     </span>
-                  )}
-                </div>
-                <span className="chevron">›</span>
-              </li>
-            ))}
+                    {person.summary && (
+                      <span className="person-summary-preview">
+                        {person.summary.slice(0, 60)}...
+                      </span>
+                    )}
+                  </div>
+                  <span className="chevron">›</span>
+                </li>
+              );
+            })}
           </ul>
         )}
       </main>
