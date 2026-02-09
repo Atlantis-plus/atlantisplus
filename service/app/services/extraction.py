@@ -59,6 +59,24 @@ def extract_from_text_simple(text: str) -> ExtractionResult:
   "edges": [{{ "source": "p1", "target": "p2", "type": "knows", "context": "..." }}]
 }}
 
+IMPORTANT - ALLOWED PREDICATES (you MUST use ONLY these):
+- works_at: current company/organization
+- role_is: current job title/role
+- strong_at: skills, expertise (e.g., "frontend development", "ML")
+- can_help_with: specific things they can help with
+- worked_on: notable projects or achievements
+- background: education, career history (e.g., "entrepreneur", "founded 3 companies")
+- located_in: current location
+- speaks_language: languages
+- interested_in: hobbies, interests (e.g., "meditation", "kitesurfing")
+- reputation_note: what others say
+- contact_context: how we met
+- relationship_depth: shared experiences
+- recommend_for: recommended for specific areas
+- not_recommend_for: not recommended for specific areas
+
+BREAK DOWN into multiple assertions! Don't lump everything into one "note" - use specific predicates above.
+
 Note:
 {text}"""}
         ],

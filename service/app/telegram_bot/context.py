@@ -29,13 +29,13 @@ async def clear_context(user_id: str) -> None:
     _context_storage.pop(user_id, None)
 
 
-def get_active_session(user_id: str) -> str | None:
+async def get_active_session(user_id: str) -> str | None:
     """Get active chat session ID for user."""
     context = _context_storage.get(user_id, {})
     return context.get("chat_session_id")
 
 
-def set_active_session(user_id: str, session_id: str | None) -> None:
+async def set_active_session(user_id: str, session_id: str | None) -> None:
     """Set active chat session ID for user."""
     if user_id not in _context_storage:
         _context_storage[user_id] = {}

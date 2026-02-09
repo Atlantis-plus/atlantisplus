@@ -162,6 +162,12 @@ WHEN USER ANSWERS A QUESTION:
 - Don't interrupt important tasks with questions
 - Good moments to ask: after completing a task, during casual conversation, when discussing a person
 
+IMPORTANT - IGNORING PROACTIVE QUESTIONS:
+- If you asked a proactive question but user asks a NEW unrelated question → simply ignore your question and answer the new one
+- Example: you asked "Where did you meet Vasya?" but user asks "Who works in tech?" → just search for tech people, don't mention Vasya
+- User is NOT obligated to answer your questions - they control the conversation
+- If user changes topic, follow their lead immediately without mentioning the unanswered question
+
 You help the user answer questions like:
 - "Who can help me with X?"
 - "What do I know about [person]?"
@@ -184,10 +190,16 @@ async def execute_tool(tool_name: str, args: dict, user_id: str) -> str:
             'match_assertions_community',
             {
                 'query_embedding': query_embedding,
-                'match_threshold': 0.3,
+                'match_threshold': 0.25,  # Lowered from 0.3 to catch more variations
                 'match_count': 20
             }
         ).execute()
+
+        print(f"[SEARCH] Query: {args['query']}")
+        print(f"[SEARCH] Found {len(match_result.data) if match_result.data else 0} matching assertions")
+        if match_result.data:
+            for i, match in enumerate(match_result.data[:5]):
+                print(f"[SEARCH] Match {i+1}: person_id={match['subject_person_id']}, similarity={match['similarity']:.3f}, predicate={match['predicate']}, value={match['object_value'][:50]}")
 
         if not match_result.data:
             return "No relevant people found for this query."
@@ -739,3 +751,148 @@ async def get_session_messages(
     ).eq('session_id', session_id).neq('role', 'tool').order('created_at').execute()
 
     return {"messages": messages.data}
+
+
+async def chat_direct(message: str, user_id: str, session_id: Optional[str] = None) -> tuple[str, str]:
+    """
+    Direct chat function for Telegram bot (no HTTP overhead).
+
+    Returns: (response_message, session_id)
+    """
+    settings = get_settings()
+    supabase = get_supabase_admin()
+    client = openai.OpenAI(api_key=settings.openai_api_key)
+
+    # Get or create session
+    if session_id:
+        # Verify session belongs to user
+        session_check = supabase.table('chat_session').select('session_id').eq(
+            'session_id', session_id
+        ).eq('owner_id', user_id).execute()
+
+        if not session_check.data:
+            session_id = None  # Create new session
+
+    if not session_id:
+        # Create new session
+        session = supabase.table('chat_session').insert({
+            'owner_id': user_id,
+            'title': message[:50] + ('...' if len(message) > 50 else '')
+        }).execute()
+        session_id = session.data[0]['session_id']
+
+    # Save user message
+    supabase.table('chat_message').insert({
+        'session_id': session_id,
+        'role': 'user',
+        'content': message
+    }).execute()
+
+    # Load conversation history
+    history = supabase.table('chat_message').select(
+        'role, content, tool_calls, tool_call_id'
+    ).eq('session_id', session_id).order('created_at').execute()
+
+    # Build messages for OpenAI
+    messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+
+    for msg in history.data:
+        if msg['role'] == 'tool':
+            messages.append({
+                "role": "tool",
+                "content": msg['content'],
+                "tool_call_id": msg['tool_call_id']
+            })
+        elif msg['role'] == 'assistant' and msg.get('tool_calls'):
+            messages.append({
+                "role": "assistant",
+                "content": msg['content'] or "",
+                "tool_calls": msg['tool_calls']
+            })
+        else:
+            messages.append({
+                "role": msg['role'],
+                "content": msg['content']
+            })
+
+    max_iterations = 5  # Prevent infinite loops
+
+    for _ in range(max_iterations):
+        # Call OpenAI
+        response = client.chat.completions.create(
+            model="gpt-4o",
+            messages=messages,
+            tools=TOOLS,
+            tool_choice="auto",
+            temperature=0.7
+        )
+
+        assistant_message = response.choices[0].message
+
+        # Check if we need to call tools
+        if assistant_message.tool_calls:
+            # Save assistant message with tool calls
+            tool_calls_json = [
+                {
+                    "id": tc.id,
+                    "type": "function",
+                    "function": {
+                        "name": tc.function.name,
+                        "arguments": tc.function.arguments
+                    }
+                }
+                for tc in assistant_message.tool_calls
+            ]
+
+            supabase.table('chat_message').insert({
+                'session_id': session_id,
+                'role': 'assistant',
+                'content': assistant_message.content or '',
+                'tool_calls': tool_calls_json
+            }).execute()
+
+            messages.append({
+                "role": "assistant",
+                "content": assistant_message.content or "",
+                "tool_calls": tool_calls_json
+            })
+
+            # Execute each tool
+            for tool_call in assistant_message.tool_calls:
+                tool_name = tool_call.function.name
+                tool_args = json.loads(tool_call.function.arguments)
+
+                result = await execute_tool(tool_name, tool_args, user_id)
+
+                # Save tool response
+                supabase.table('chat_message').insert({
+                    'session_id': session_id,
+                    'role': 'tool',
+                    'content': result,
+                    'tool_call_id': tool_call.id
+                }).execute()
+
+                messages.append({
+                    "role": "tool",
+                    "content": result,
+                    "tool_call_id": tool_call.id
+                })
+        else:
+            # No more tool calls, save final response
+            final_content = assistant_message.content or ""
+
+            supabase.table('chat_message').insert({
+                'session_id': session_id,
+                'role': 'assistant',
+                'content': final_content
+            }).execute()
+
+            # Update session timestamp
+            supabase.table('chat_session').update({
+                'updated_at': 'now()'
+            }).eq('session_id', session_id).execute()
+
+            return (final_content, session_id)
+
+    # If we hit max iterations
+    return ("I apologize, but I'm having trouble completing this request. Please try again.", session_id)

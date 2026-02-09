@@ -27,6 +27,8 @@ export const PeoplePage = () => {
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const [activeTab, setActiveTab] = useState<TabType>('own');
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
   const currentUserId = session?.user?.id;
 
@@ -70,6 +72,32 @@ export const PeoplePage = () => {
   const handleBack = () => {
     setSelectedPerson(null);
     setAssertions([]);
+    setShowDeleteConfirm(false);
+  };
+
+  const handleDelete = async () => {
+    if (!selectedPerson) return;
+
+    setDeleting(true);
+    try {
+      // Soft delete: update status to 'deleted'
+      await supabase
+        .from('person')
+        .update({ status: 'deleted' })
+        .eq('person_id', selectedPerson.person_id);
+
+      // Remove from local state
+      setPeople(prev => prev.filter(p => p.person_id !== selectedPerson.person_id));
+
+      // Go back to list
+      setSelectedPerson(null);
+      setShowDeleteConfirm(false);
+    } catch (err) {
+      console.error('Failed to delete person:', err);
+      alert('Failed to delete contact');
+    } finally {
+      setDeleting(false);
+    }
   };
 
   // Split people into own and shared
@@ -127,6 +155,15 @@ export const PeoplePage = () => {
             {selectedPerson.display_name}
             {!isOwnPerson && <span className="shared-badge">Shared</span>}
           </h1>
+          {isOwnPerson && (
+            <button
+              className="delete-btn"
+              onClick={() => setShowDeleteConfirm(true)}
+              disabled={deleting}
+            >
+              🗑️ Delete
+            </button>
+          )}
         </header>
 
         <main className="main">
@@ -155,6 +192,33 @@ export const PeoplePage = () => {
             )}
           </div>
         </main>
+
+        {/* Delete Confirmation Modal */}
+        {showDeleteConfirm && (
+          <div className="modal-overlay" onClick={() => setShowDeleteConfirm(false)}>
+            <div className="modal-content" onClick={(e) => e.stopPropagation()}>
+              <h3>Delete Contact?</h3>
+              <p>Are you sure you want to delete <strong>{selectedPerson.display_name}</strong>?</p>
+              <p className="modal-hint">This will remove the person and all their facts.</p>
+              <div className="modal-actions">
+                <button
+                  className="btn-secondary"
+                  onClick={() => setShowDeleteConfirm(false)}
+                  disabled={deleting}
+                >
+                  Cancel
+                </button>
+                <button
+                  className="btn-danger"
+                  onClick={handleDelete}
+                  disabled={deleting}
+                >
+                  {deleting ? 'Deleting...' : 'Delete'}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     );
   }

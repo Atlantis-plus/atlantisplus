@@ -24,6 +24,7 @@ from app.services.transcription import transcribe_from_storage
 from app.supabase_client import get_supabase_admin
 from app.config import get_settings
 from app.api.process import process_pipeline
+from app.api.chat import chat_direct
 
 
 async def handle_start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -308,22 +309,35 @@ async def handle_chat_message_direct(chat_id: int, text: str, user_id: str, user
     """
     Handle query/dialog message.
 
-    Direct call to chat logic - NO HTTP!
-    Phase 1: Simple response (full chat agent in Phase 4)
+    Direct call to chat agent with tool use - NO HTTP!
     """
     logger.info(f"Processing chat query for user_id={user_id}")
 
     # Show typing indicator
     await send_chat_action(chat_id, "typing")
 
-    # Phase 1: Simple response
-    # TODO Phase 4: Implement full chat agent with tool use
-    await send_message(
-        chat_id,
-        "🔍 Phase 1: Query support coming soon!\n\n"
-        "For now, the bot can only save notes.\n"
-        "Full chat agent will be added in Phase 4."
-    )
+    try:
+        # Get session_id from context (if continuing dialog)
+        session_id = user_context.get("chat_session_id")
+
+        # Call chat agent directly
+        response_message, new_session_id = await chat_direct(text, user_id, session_id)
+
+        # Update context with session_id
+        await set_active_session(str(chat_id), new_session_id)
+
+        # Send response
+        await send_message(chat_id, response_message)
+
+        logger.info(f"Chat response sent for session_id={new_session_id}")
+
+    except Exception as e:
+        logger.error(f"Error in chat handler: {e}", exc_info=True)
+        await send_message(
+            chat_id,
+            f"❌ Error processing query: {str(e)[:200]}\n"
+            "Try rephrasing or use /reset to start fresh."
+        )
 
 
 async def handle_voice_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -393,46 +407,66 @@ async def handle_voice_message(update: Update, context: ContextTypes.DEFAULT_TYP
 
         # 5. Transcribe
         transcript = await transcribe_from_storage(storage_path)
-        logger.info(f"Transcribed {len(transcript)} chars")
+        logger.info(f"Transcribed {len(transcript)} chars: {transcript[:100]}")
 
         # Update evidence with transcript
         supabase.table("raw_evidence").update({
             "content": transcript
         }).eq("evidence_id", evidence_id).execute()
 
-        # 6. Run extraction pipeline (same as for text)
-        await process_pipeline(
-            evidence_id,
-            supabase_user["user_id"],
-            transcript,
-            is_voice=True,
-            storage_path=storage_path
-        )
+        # 6. Classify transcript (same as text messages)
+        user_context = await load_context(str(user.id))
+        msg_type = await classify_message(transcript, user_context)
+        logger.info(f"Voice transcript classified as: {msg_type}")
 
-        # 7. Get extraction results to report back
-        # Get assertions with linked people for this evidence
-        assertions_result = supabase.table("assertion").select(
-            "assertion_id, person:subject_person_id(person_id, display_name)"
-        ).eq("evidence_id", evidence_id).execute()
+        # 7. Route based on classification
+        if msg_type == "note":
+            # Run extraction pipeline
+            await process_pipeline(
+                evidence_id,
+                supabase_user["user_id"],
+                transcript,
+                is_voice=True,
+                storage_path=storage_path
+            )
 
-        # Extract unique people from this evidence
-        people_dict = {}
-        for assertion in assertions_result.data:
-            person = assertion.get("person")
-            if person:
-                people_dict[person["person_id"]] = person["display_name"]
+            # Get extraction results to report back
+            assertions_result = supabase.table("assertion").select(
+                "assertion_id, person:subject_person_id(person_id, display_name)"
+            ).eq("evidence_id", evidence_id).execute()
 
-        people_names = ", ".join(people_dict.values())
+            # Extract unique people from this evidence
+            people_dict = {}
+            for assertion in assertions_result.data:
+                person = assertion.get("person")
+                if person:
+                    people_dict[person["person_id"]] = person["display_name"]
 
-        await send_message(
-            chat_id,
-            f"✅ Done! Extracted:\n"
-            f"• People: {people_names or 'none found'}\n"
-            f"• Facts: {len(assertions_result.data)}\n\n"
-            "View in catalog via menu button 👇"
-        )
+            people_names = ", ".join(people_dict.values())
 
-        logger.info(f"Successfully processed voice: {len(people_dict)} people, {len(assertions_result.data)} assertions")
+            await send_message(
+                chat_id,
+                f"✅ Done! Extracted:\n"
+                f"• People: {people_names or 'none found'}\n"
+                f"• Facts: {len(assertions_result.data)}\n\n"
+                "View in catalog via menu button 👇"
+            )
+
+            logger.info(f"Successfully processed voice note: {len(people_dict)} people, {len(assertions_result.data)} assertions")
+
+        else:  # "query" or "dialog"
+            # Delete the evidence record (not a note)
+            supabase.table("raw_evidence").delete().eq("evidence_id", evidence_id).execute()
+
+            # Handle as chat query
+            await handle_chat_message_direct(
+                chat_id,
+                transcript,
+                supabase_user["user_id"],
+                user_context
+            )
+
+            logger.info(f"Successfully processed voice query")
 
     except Exception as e:
         logger.error(f"Error processing voice: {e}", exc_info=True)
