@@ -1,4 +1,7 @@
 from typing import Optional
+from datetime import datetime, timedelta
+from uuid import UUID
+
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 import openai
@@ -8,6 +11,7 @@ from app.config import get_settings
 from app.supabase_client import get_supabase_admin
 from app.middleware.auth import verify_supabase_token, get_user_id
 from app.services.embedding import generate_embedding
+from app.services.gap_detection import get_gap_detection_service
 
 router = APIRouter(tags=["chat"])
 
@@ -34,7 +38,7 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "search_network",
-            "description": "Search the user's network for people matching a query. Use this when the user asks about finding someone or who can help with something.",
+            "description": "Search the COMMUNITY network for people matching a query. Searches both user's own contacts AND shared contacts from other users. Results include 'is_own' and 'source' fields.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -68,13 +72,13 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "list_people",
-            "description": "List all people in the user's network, optionally filtered. Use when user asks 'who do I know' or wants to see their contacts.",
+            "description": "List all people in the COMMUNITY network. Returns two groups: 'own_people' (user's contacts) and 'shared_people' (from other users).",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "limit": {
                         "type": "integer",
-                        "description": "Maximum number of people to return",
+                        "description": "Maximum number of people to return per group",
                         "default": 20
                     }
                 }
@@ -85,7 +89,7 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "add_note_about_person",
-            "description": "Add a new note or fact about a person. Use when user provides new information about someone.",
+            "description": "Add a new note or fact about a person. ONLY works for user's own contacts, not shared ones. If person doesn't exist, creates a new one.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -101,26 +105,62 @@ TOOLS = [
                 "required": ["person_name", "note"]
             }
         }
-    }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_pending_question",
+            "description": "Get a pending question to ask the user about their network. Use this occasionally to help fill gaps in profiles.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "person_name": {
+                        "type": "string",
+                        "description": "Optional: get question about a specific person"
+                    }
+                }
+            }
+        }
+    },
 ]
 
 SYSTEM_PROMPT = """You are a personal network assistant helping the user manage and query their professional network.
 
-You have access to the user's network data - people they know, facts about those people, and connections between them.
+You have access to COMMUNITY DATA - people added by the user AND by other users in the community.
+When showing results, indicate whether a person is "Мой контакт" (user's own) or "Shared" (from others).
 
 Your capabilities:
-1. Search for people based on skills, expertise, companies, or any criteria
-2. Look up detailed information about specific people
-3. List people in the network
-4. Add new notes about people
+1. Search for people based on skills, expertise, companies, or any criteria (searches ALL community data)
+2. Look up detailed information about specific people (from any community member)
+3. List people in the network (shows both own and shared)
+4. Add new notes about people (ONLY for user's own contacts, not shared ones)
+5. Ask proactive questions to help fill gaps in profiles
 
 Guidelines:
 - Be concise but helpful
 - When searching, explain WHY certain people might be relevant
+- ALWAYS mention if a person is from shared data vs user's own
 - If the user mentions someone new, offer to add them
 - For ambiguous names, ask for clarification
 - Suggest non-obvious connections when relevant
 - Respond in the same language as the user
+- User can ONLY add notes to their own contacts (is_own=true, editable=true)
+
+PROACTIVE QUESTIONS — IMPORTANT:
+- After EVERY successful action (adding note, searching, showing person info), call get_pending_question
+- If a question is returned, ask it naturally at the END of your response
+- Example flow: user asks "что знаешь о Васе?" → you show info → then add "Кстати, где вы познакомились с Васей?"
+- When showing a person with few facts (1-2), ALWAYS mention that the profile is incomplete and ask a question
+- Phrase questions naturally in Russian: "Кстати, ...", "А где работает ...?", "Как вы познакомились с ...?"
+
+WHEN USER ANSWERS A QUESTION:
+- If you asked "Где познакомились с X?" and user replies with an answer, use add_note_about_person to save it
+- Example: you asked about Вася, user says "В Сингапуре" → call add_note_about_person(person_name="Вася", note="Познакомились в Сингапуре")
+- Always convert short answers into full notes with context
+- If the user answers a proactive question, use answer_question to record it
+- Don't ask more than 1-2 questions per conversation
+- Don't interrupt important tasks with questions
+- Good moments to ask: after completing a task, during casual conversation, when discussing a person
 
 You help the user answer questions like:
 - "Who can help me with X?"
@@ -139,14 +179,13 @@ async def execute_tool(tool_name: str, args: dict, user_id: str) -> str:
         # Generate embedding for query
         query_embedding = generate_embedding(args["query"])
 
-        # Semantic search
+        # Semantic search across ALL users (community sharing)
         match_result = supabase.rpc(
-            'match_assertions',
+            'match_assertions_community',
             {
                 'query_embedding': query_embedding,
                 'match_threshold': 0.3,
-                'match_count': 15,
-                'p_owner_id': user_id
+                'match_count': 20
             }
         ).execute()
 
@@ -156,9 +195,11 @@ async def execute_tool(tool_name: str, args: dict, user_id: str) -> str:
         # Group by person
         person_facts = {}
         person_ids = set()
+        person_owners = {}  # Track owner of each person
         for match in match_result.data:
             pid = match['subject_person_id']
             person_ids.add(pid)
+            person_owners[pid] = match.get('owner_id')
             if pid not in person_facts:
                 person_facts[pid] = []
             person_facts[pid].append({
@@ -166,43 +207,125 @@ async def execute_tool(tool_name: str, args: dict, user_id: str) -> str:
                 'similarity': match['similarity']
             })
 
-        # Get person names
-        people = supabase.table('person').select('person_id, display_name').in_(
+        # Get person names and owner info
+        people = supabase.table('person').select('person_id, display_name, owner_id').in_(
             'person_id', list(person_ids)
         ).execute()
 
         name_map = {p['person_id']: p['display_name'] for p in people.data}
+        owner_map = {p['person_id']: p['owner_id'] for p in people.data}
 
         results = []
         for pid, facts in person_facts.items():
             name = name_map.get(pid, 'Unknown')
             avg_sim = sum(f['similarity'] for f in facts) / len(facts)
             fact_list = [f['fact'] for f in facts[:5]]
+            owner_id_of_person = owner_map.get(pid)
+            is_own = owner_id_of_person == user_id
             results.append({
                 'name': name,
                 'relevance': round(avg_sim, 2),
-                'facts': fact_list
+                'facts': fact_list,
+                'is_own': is_own,
+                'source': 'Мой контакт' if is_own else 'Shared'
             })
 
         results.sort(key=lambda x: x['relevance'], reverse=True)
         return json.dumps(results[:10], ensure_ascii=False, indent=2)
 
     elif tool_name == "get_person_details":
-        # Find person by name (case-insensitive partial match)
-        person_result = supabase.table('person').select(
-            'person_id, display_name, summary'
-        ).eq('owner_id', user_id).ilike(
-            'display_name', f"%{args['person_name']}%"
-        ).eq('status', 'active').execute()
+        search_name = args['person_name']
 
-        if not person_result.data:
-            return f"Person '{args['person_name']}' not found in your network."
+        # Russian name synonyms (diminutives ↔ full names)
+        NAME_SYNONYMS = {
+            'вася': ['василий', 'васёк', 'васька'],
+            'василий': ['вася', 'васёк', 'васька'],
+            'петя': ['пётр', 'петр', 'петька'],
+            'пётр': ['петя', 'петька'],
+            'петр': ['петя', 'петька'],
+            'саша': ['александр', 'александра', 'сашка', 'шура'],
+            'александр': ['саша', 'сашка', 'шура'],
+            'коля': ['николай', 'колян'],
+            'николай': ['коля', 'колян'],
+            'миша': ['михаил', 'мишка'],
+            'михаил': ['миша', 'мишка'],
+            'дима': ['дмитрий', 'димка', 'митя'],
+            'дмитрий': ['дима', 'димка', 'митя'],
+            'женя': ['евгений', 'евгения'],
+            'евгений': ['женя'],
+            'лёша': ['алексей', 'лёха', 'леша', 'леха'],
+            'алексей': ['лёша', 'лёха', 'леша', 'леха'],
+            'серёжа': ['сергей', 'серёга', 'сережа'],
+            'сергей': ['серёжа', 'серёга', 'сережа'],
+            'андрей': ['андрюша', 'андрюха'],
+            'наташа': ['наталья', 'наталия', 'ната'],
+            'наталья': ['наташа', 'ната'],
+            'маша': ['мария', 'машка'],
+            'мария': ['маша', 'машка'],
+            'катя': ['екатерина', 'катюша'],
+            'екатерина': ['катя', 'катюша'],
+            'оля': ['ольга'],
+            'ольга': ['оля'],
+            'таня': ['татьяна'],
+            'татьяна': ['таня'],
+        }
+
+        # Get all name variants to search
+        search_lower = search_name.lower()
+        name_variants = [search_name]
+        if search_lower in NAME_SYNONYMS:
+            name_variants.extend(NAME_SYNONYMS[search_lower])
+
+        # Strategy 1: Exact substring match on display_name (with synonyms) - across ALL users
+        person_result = None
+        for name_variant in name_variants:
+            person_result = supabase.table('person').select(
+                'person_id, display_name, summary, owner_id'
+            ).ilike(
+                'display_name', f"%{name_variant}%"
+            ).eq('status', 'active').execute()
+            if person_result.data:
+                break
+
+        # Strategy 2: Fuzzy match using pg_trgm - across ALL users
+        if not person_result or not person_result.data:
+            fuzzy_result = supabase.rpc(
+                'find_similar_names_community',
+                {
+                    'p_name': search_name,
+                    'p_threshold': 0.3
+                }
+            ).execute()
+
+            if fuzzy_result.data:
+                person_ids = [r['person_id'] for r in fuzzy_result.data]
+                person_result = supabase.table('person').select(
+                    'person_id, display_name, summary, owner_id'
+                ).in_('person_id', person_ids).eq('status', 'active').execute()
+
+        # Strategy 3: Search in identities (freeform_name variations)
+        if not person_result or not person_result.data:
+            identity_result = supabase.table('identity').select(
+                'person_id'
+            ).eq('namespace', 'freeform_name').ilike(
+                'value', f"%{search_name}%"
+            ).execute()
+
+            if identity_result.data:
+                person_ids = list(set(i['person_id'] for i in identity_result.data))
+                person_result = supabase.table('person').select(
+                    'person_id, display_name, summary, owner_id'
+                ).in_('person_id', person_ids).eq('status', 'active').execute()
+
+        if not person_result or not person_result.data:
+            return f"Person '{search_name}' not found. Try a different spelling or add them first."
 
         if len(person_result.data) > 1:
             names = [p['display_name'] for p in person_result.data]
             return f"Multiple people match '{args['person_name']}': {', '.join(names)}. Please be more specific."
 
         person = person_result.data[0]
+        is_own_person = person.get('owner_id') == user_id
 
         # Get all assertions about this person
         assertions = supabase.table('assertion').select(
@@ -211,24 +334,60 @@ async def execute_tool(tool_name: str, args: dict, user_id: str) -> str:
 
         facts = [f"- {a['predicate']}: {a['object_value']}" for a in assertions.data]
 
+        # Check profile completeness
+        predicates = set(a['predicate'] for a in assertions.data)
+        missing = []
+        if not predicates & {'contact_context', 'background', 'knows'}:
+            missing.append("где познакомились")
+        if not predicates & {'works_at', 'role_is'}:
+            missing.append("где работает")
+        if not predicates & {'can_help_with', 'strong_at'}:
+            missing.append("в чём силён")
+
         result = {
             'name': person['display_name'],
             'summary': person.get('summary', 'No summary yet'),
-            'facts': facts if facts else ['No facts recorded yet']
+            'facts': facts if facts else ['No facts recorded yet'],
+            'profile_incomplete': len(missing) > 0,
+            'missing_info': missing if missing else None,
+            'is_own': is_own_person,
+            'source': 'Мой контакт' if is_own_person else 'Shared',
+            'editable': is_own_person
         }
         return json.dumps(result, ensure_ascii=False, indent=2)
 
     elif tool_name == "list_people":
         limit = args.get('limit', 20)
 
+        # Get ALL people (community sharing)
         people = supabase.table('person').select(
-            'person_id, display_name, summary'
-        ).eq('owner_id', user_id).eq('status', 'active').limit(limit).execute()
+            'person_id, display_name, summary, owner_id'
+        ).eq('status', 'active').limit(limit * 2).execute()  # Get more to split
 
         if not people.data:
-            return "Your network is empty. Start by adding notes about people you know."
+            return "No people in the network yet. Start by adding notes about people you know."
 
-        result = [{'name': p['display_name'], 'summary': p.get('summary', '')} for p in people.data]
+        # Split into own and shared
+        own_people = []
+        shared_people = []
+        for p in people.data:
+            person_info = {
+                'name': p['display_name'],
+                'summary': p.get('summary', ''),
+                'is_own': p['owner_id'] == user_id,
+                'source': 'Мой контакт' if p['owner_id'] == user_id else 'Shared'
+            }
+            if p['owner_id'] == user_id:
+                own_people.append(person_info)
+            else:
+                shared_people.append(person_info)
+
+        result = {
+            'own_people': own_people[:limit],
+            'shared_people': shared_people[:limit],
+            'total_own': len(own_people),
+            'total_shared': len(shared_people)
+        }
         return json.dumps(result, ensure_ascii=False, indent=2)
 
     elif tool_name == "add_note_about_person":
@@ -278,6 +437,102 @@ async def execute_tool(tool_name: str, args: dict, user_id: str) -> str:
             return f"Created new person '{person_name}' and added the note."
         else:
             return f"Added note about {person_name}."
+
+    elif tool_name == "get_pending_question":
+        # Check rate limit first
+        rate_result = supabase.from_("question_rate_limit").select("*").eq(
+            "owner_id", user_id
+        ).execute()
+
+        from datetime import timezone
+        now = datetime.now(timezone.utc)
+        today = now.date()
+        settings = get_settings()
+
+        if rate_result.data:
+            rate = rate_result.data[0]
+
+            # Check if paused
+            if rate.get("paused_until"):
+                paused_until = datetime.fromisoformat(rate["paused_until"].replace("Z", "+00:00"))
+                if now < paused_until:
+                    return "No questions available right now."
+
+            # Reset daily counter if needed
+            last_reset = datetime.strptime(rate["last_daily_reset"], "%Y-%m-%d").date()
+            if today > last_reset:
+                supabase.from_("question_rate_limit").update({
+                    "questions_shown_today": 0,
+                    "last_daily_reset": str(today)
+                }).eq("owner_id", user_id).execute()
+            elif rate["questions_shown_today"] >= settings.questions_max_per_day:
+                return "Daily question limit reached."
+
+            # Check cooldown
+            if rate.get("last_question_at"):
+                last_q = datetime.fromisoformat(rate["last_question_at"].replace("Z", "+00:00"))
+                if now - last_q < timedelta(hours=settings.questions_cooldown_hours):
+                    return "No questions available right now (cooldown)."
+
+        # Find pending question
+        query = supabase.from_("proactive_question").select(
+            "question_id, person_id, question_type, question_text_ru, question_text, person:person_id(display_name)"
+        ).eq("owner_id", user_id).eq("status", "pending").gt(
+            "expires_at", now.isoformat()
+        ).order("priority", desc=True).limit(1)
+
+        # Filter by person if specified
+        if args.get("person_name"):
+            # Find person first
+            person_match = supabase.from_("person").select("person_id").eq(
+                "owner_id", user_id
+            ).ilike("display_name", f"%{args['person_name']}%").execute()
+
+            if person_match.data:
+                query = query.eq("person_id", person_match.data[0]["person_id"])
+
+        result = query.execute()
+
+        if not result.data:
+            # Try generating new questions
+            gap_service = get_gap_detection_service()
+            await gap_service.generate_questions_batch(UUID(user_id), limit=3)
+            result = query.execute()
+
+        if not result.data:
+            return "No pending questions."
+
+        question = result.data[0]
+
+        # Mark as shown and update rate limit
+        supabase.from_("proactive_question").update({
+            "status": "shown",
+            "shown_at": now.isoformat()
+        }).eq("question_id", question["question_id"]).execute()
+
+        # Update rate limit
+        supabase.from_("question_rate_limit").upsert({
+            "owner_id": user_id,
+            "last_question_at": now.isoformat(),
+            "last_daily_reset": str(today)
+        }, on_conflict="owner_id").execute()
+
+        # Increment shown count
+        if rate_result.data:
+            supabase.from_("question_rate_limit").update({
+                "questions_shown_today": rate_result.data[0].get("questions_shown_today", 0) + 1
+            }).eq("owner_id", user_id).execute()
+
+        person_name = ""
+        if question.get("person") and question["person"]:
+            person_name = question["person"].get("display_name", "")
+
+        return json.dumps({
+            "question_id": question["question_id"],
+            "person_name": person_name,
+            "question_text": question.get("question_text_ru") or question["question_text"],
+            "question_type": question["question_type"]
+        }, ensure_ascii=False)
 
     return f"Unknown tool: {tool_name}"
 
