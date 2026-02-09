@@ -2,11 +2,13 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 import openai
+import json
 
 from app.config import get_settings
 from app.supabase_client import get_supabase_admin
 from app.middleware.auth import verify_supabase_token, get_user_id
 from app.services.embedding import generate_embedding
+from app.agents.prompts import REASONING_SYSTEM_PROMPT
 
 router = APIRouter(tags=["search"])
 
@@ -85,29 +87,82 @@ async def search_network(
 
     person_map = {p['person_id']: p for p in people_result.data}
 
-    # 5. Build context for GPT-4o reasoning
+    # 5. Fetch ALL assertions for matched people (not just matched ones)
+    all_assertions_result = supabase.table('assertion').select(
+        'subject_person_id, predicate, object_value, confidence'
+    ).in_('subject_person_id', list(person_ids)).execute()
+
+    # Group all assertions by person
+    full_person_assertions: dict[str, list[dict]] = {}
+    for a in all_assertions_result.data or []:
+        pid = a['subject_person_id']
+        if pid not in full_person_assertions:
+            full_person_assertions[pid] = []
+        full_person_assertions[pid].append({
+            'predicate': a['predicate'],
+            'value': a['object_value'],
+            'confidence': a.get('confidence', 0.5)
+        })
+
+    # 6. Fetch edges (connections between people)
+    edges_result = supabase.table('edge').select(
+        'src_person_id, dst_person_id, edge_type, weight'
+    ).or_(
+        f"src_person_id.in.({','.join(person_ids)}),dst_person_id.in.({','.join(person_ids)})"
+    ).execute()
+
+    # Build edges context
+    edges_context = []
+    for edge in edges_result.data or []:
+        src_name = person_map.get(edge['src_person_id'], {}).get('display_name', 'Unknown')
+        dst_name = person_map.get(edge['dst_person_id'], {}).get('display_name', 'Unknown')
+        edges_context.append(f"- {src_name} --[{edge['edge_type']}]--> {dst_name}")
+
+    # 7. Build rich context for GPT-4o reasoning
     context_parts = []
-    for person_id, assertions in person_assertions.items():
+    for person_id in person_ids:
         person = person_map.get(person_id, {})
         name = person.get('display_name', 'Unknown')
-        facts = [f"- {a['predicate']}: {a['value']}" for a in assertions]
-        context_parts.append(f"**{name}**:\n" + "\n".join(facts))
+        summary = person.get('summary', '')
+
+        # Get all facts for this person
+        all_facts = full_person_assertions.get(person_id, [])
+        facts_text = [f"  - {a['predicate']}: {a['value']}" for a in all_facts]
+
+        # Mark matched facts (higher relevance)
+        matched = person_assertions.get(person_id, [])
+        matched_text = ", ".join([f"{a['predicate']}: {a['value'][:30]}..." for a in matched[:3]])
+
+        person_context = f"**{name}**"
+        if summary:
+            person_context += f"\n  Summary: {summary}"
+        person_context += f"\n  Matched query on: {matched_text}" if matched_text else ""
+        person_context += "\n  All known facts:\n" + "\n".join(facts_text) if facts_text else ""
+
+        context_parts.append(person_context)
 
     context = "\n\n".join(context_parts)
 
-    # 6. Use GPT-4o for reasoning
+    # Add edges context
+    if edges_context:
+        context += "\n\n**Connections between people:**\n" + "\n".join(edges_context)
+
+    # 8. Use GPT-4o for reasoning with improved prompt
     client = openai.OpenAI(api_key=settings.openai_api_key)
 
-    reasoning_prompt = f"""You are a personal network advisor helping find relevant people.
-
-User's question: "{request.query}"
+    reasoning_prompt = f"""User's question: "{request.query}"
 
 People and facts from their network:
 {context}
 
 Based on this information, analyze which people are most relevant to the user's question.
+
+IMPORTANT: Look for INDIRECT connections too!
+- If user needs an investor but you only see founders → those founders probably know investors
+- If user needs someone at Company X → look for people who worked there or know people there
+- Think about 2-hop connections: who might KNOW the right person
+
 For each relevant person, explain WHY they might be helpful - be specific and reference the facts.
-Think about non-obvious connections too.
 
 Respond in JSON format:
 {{
@@ -117,7 +172,7 @@ Respond in JSON format:
       "person_id": "...",
       "display_name": "...",
       "relevance_score": 0.0-1.0,
-      "reasoning": "Why this person is relevant (be specific)",
+      "reasoning": "Why this person is relevant (be specific, mention indirect paths if applicable)",
       "matching_facts": ["fact1", "fact2"]
     }}
   ]
@@ -131,7 +186,7 @@ Respond in the same language as the user's question.
         response = client.chat.completions.create(
             model="gpt-4o",
             messages=[
-                {"role": "system", "content": "You are a helpful assistant that analyzes professional networks."},
+                {"role": "system", "content": REASONING_SYSTEM_PROMPT},
                 {"role": "user", "content": reasoning_prompt}
             ],
             response_format={"type": "json_object"},
@@ -139,7 +194,6 @@ Respond in the same language as the user's question.
         )
 
         result_json = response.choices[0].message.content
-        import json
         result_data = json.loads(result_json)
 
         # Map person names back to IDs

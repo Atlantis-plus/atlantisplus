@@ -50,3 +50,103 @@ async def send_chat_action(chat_id: int, action: str = "typing") -> None:
 
     async with httpx.AsyncClient() as client:
         await client.post(url, json={"chat_id": chat_id, "action": action})
+
+
+async def send_message_with_buttons(
+    chat_id: int,
+    text: str,
+    buttons: list[list[dict]],
+    parse_mode: Optional[str] = None
+) -> dict:
+    """
+    Send message with inline keyboard buttons.
+
+    Args:
+        chat_id: Telegram chat ID
+        text: Message text
+        buttons: 2D array of button dicts, each with 'text' and 'callback_data'
+                 Example: [[{"text": "Yes", "callback_data": "merge_yes"}]]
+        parse_mode: Optional parse mode (Markdown, HTML)
+
+    Returns:
+        Response dict with message_id
+    """
+    settings = get_settings()
+
+    url = f"https://api.telegram.org/bot{settings.telegram_bot_token}/sendMessage"
+
+    payload = {
+        "chat_id": chat_id,
+        "text": text,
+        "reply_markup": {
+            "inline_keyboard": buttons
+        }
+    }
+
+    if parse_mode:
+        payload["parse_mode"] = parse_mode
+
+    async with httpx.AsyncClient() as client:
+        response = await client.post(url, json=payload)
+        response.raise_for_status()
+        return response.json()
+
+
+async def edit_message_text(
+    chat_id: int,
+    message_id: int,
+    text: str,
+    parse_mode: Optional[str] = None
+) -> None:
+    """
+    Edit an existing message.
+
+    Args:
+        chat_id: Telegram chat ID
+        message_id: ID of message to edit
+        text: New message text
+        parse_mode: Optional parse mode
+    """
+    settings = get_settings()
+
+    url = f"https://api.telegram.org/bot{settings.telegram_bot_token}/editMessageText"
+
+    payload = {
+        "chat_id": chat_id,
+        "message_id": message_id,
+        "text": text
+    }
+
+    if parse_mode:
+        payload["parse_mode"] = parse_mode
+
+    async with httpx.AsyncClient() as client:
+        response = await client.post(url, json=payload)
+        response.raise_for_status()
+
+
+async def get_telegram_id_for_user(user_id: str) -> Optional[int]:
+    """
+    Get Telegram chat ID from Supabase user_id.
+
+    Returns:
+        Telegram ID (int) or None if not found
+    """
+    from app.supabase_client import get_supabase_admin
+
+    supabase = get_supabase_admin()
+
+    try:
+        users_response = supabase.auth.admin.list_users()
+
+        for user in users_response:
+            if str(user.id) == user_id:
+                user_metadata = getattr(user, 'user_metadata', {}) or {}
+                telegram_id = user_metadata.get("telegram_id")
+                if telegram_id:
+                    return int(telegram_id)
+
+        return None
+
+    except Exception:
+        return None

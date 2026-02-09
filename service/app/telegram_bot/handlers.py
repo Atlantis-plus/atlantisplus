@@ -21,6 +21,7 @@ from .logging_config import bot_logger as logger
 from app.services.extraction import extract_from_text_simple
 from app.services.embedding import generate_embeddings_batch, create_assertion_text
 from app.services.transcription import transcribe_from_storage
+from app.services.proactive import get_proactive_service
 from app.supabase_client import get_supabase_admin
 from app.config import get_settings
 from app.api.process import process_pipeline
@@ -287,6 +288,19 @@ async def handle_note_message_direct(chat_id: int, text: str, user_id: str) -> N
             "View in catalog via menu button 👇"
         )
 
+        # Check for duplicates and send proactive notifications
+        if person_map:
+            try:
+                proactive_service = get_proactive_service()
+                notifications = await proactive_service.check_and_notify_duplicates(
+                    user_id,
+                    list(person_map.values())
+                )
+                if notifications > 0:
+                    logger.info(f"Sent {notifications} duplicate notification(s)")
+            except Exception as dedup_error:
+                logger.warning(f"Dedup notification failed (non-critical): {dedup_error}")
+
     except Exception as e:
         logger.error(f"Error processing note: {e}", exc_info=True)
 
@@ -474,6 +488,52 @@ async def handle_voice_message(update: Update, context: ContextTypes.DEFAULT_TYP
             chat_id,
             f"❌ Error processing voice message: {str(e)[:200]}"
         )
+
+
+async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    Handle inline keyboard button callbacks.
+
+    Callback data format: "action:param1:param2"
+    Actions: merge, reject
+    """
+    query = update.callback_query
+    user = update.effective_user
+    callback_data = query.data
+    message_id = query.message.message_id
+    chat_id = query.message.chat_id
+
+    logger.info(f"Callback from user_id={user.id}: {callback_data}")
+
+    # Answer the callback to remove loading state
+    await query.answer()
+
+    # Authenticate user
+    try:
+        supabase_user = await get_or_create_user(
+            telegram_id=str(user.id),
+            telegram_username=user.username,
+            display_name=user.first_name
+        )
+    except Exception as e:
+        logger.error(f"Callback auth failed: {e}", exc_info=True)
+        await query.answer("Authentication error", show_alert=True)
+        return
+
+    # Handle the callback
+    try:
+        proactive_service = get_proactive_service()
+        response = await proactive_service.handle_callback(
+            supabase_user["user_id"],
+            callback_data,
+            message_id,
+            chat_id
+        )
+        logger.info(f"Callback handled: {response[:50]}")
+
+    except Exception as e:
+        logger.error(f"Callback error: {e}", exc_info=True)
+        await query.answer(f"Error: {str(e)[:50]}", show_alert=True)
 
 
 async def handle_error(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

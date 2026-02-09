@@ -6,7 +6,7 @@ Uses python-telegram-bot library with webhook mode.
 
 import asyncio
 from telegram import Update
-from telegram.ext import Application, CommandHandler, MessageHandler, filters
+from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters
 
 from app.config import get_settings
 from .logging_config import bot_logger as logger
@@ -16,6 +16,7 @@ from .handlers import (
     handle_reset_command,
     handle_text_message,
     handle_voice_message,
+    handle_callback_query,
     handle_error,
 )
 
@@ -51,6 +52,11 @@ def get_bot_application() -> Application:
         # Voice messages
         _application.add_handler(
             MessageHandler(filters.VOICE, handle_voice_message)
+        )
+
+        # Callback queries (inline keyboard buttons)
+        _application.add_handler(
+            CallbackQueryHandler(handle_callback_query)
         )
 
         # Error handler

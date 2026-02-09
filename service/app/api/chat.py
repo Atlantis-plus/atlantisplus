@@ -12,6 +12,7 @@ from app.supabase_client import get_supabase_admin
 from app.middleware.auth import verify_supabase_token, get_user_id
 from app.services.embedding import generate_embedding
 from app.services.gap_detection import get_gap_detection_service
+from app.services.dedup import get_dedup_service
 
 router = APIRouter(tags=["chat"])
 
@@ -122,6 +123,103 @@ TOOLS = [
             }
         }
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "merge_people",
+            "description": "Merge two people who are actually the same person. Moves all facts and connections from person_b to person_a.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "person_a_name": {
+                        "type": "string",
+                        "description": "Name of the person to KEEP (canonical)"
+                    },
+                    "person_b_name": {
+                        "type": "string",
+                        "description": "Name of the person to MERGE INTO person_a (will be marked as merged)"
+                    }
+                },
+                "required": ["person_a_name", "person_b_name"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "suggest_merge_candidates",
+            "description": "Find potential duplicate people in the network who might be the same person. Returns pairs with similarity scores.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "limit": {
+                        "type": "integer",
+                        "description": "Maximum number of candidates to return",
+                        "default": 5
+                    }
+                }
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "delete_person",
+            "description": "Delete a person from the network (soft delete). ONLY works for user's own contacts.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "person_name": {
+                        "type": "string",
+                        "description": "Name of the person to delete"
+                    }
+                },
+                "required": ["person_name"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "edit_person",
+            "description": "Edit a person's display name. ONLY works for user's own contacts.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "current_name": {
+                        "type": "string",
+                        "description": "Current name of the person"
+                    },
+                    "new_name": {
+                        "type": "string",
+                        "description": "New display name"
+                    }
+                },
+                "required": ["current_name", "new_name"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "reject_merge",
+            "description": "Mark two people as definitely NOT the same person (reject duplicate suggestion).",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "person_a_name": {
+                        "type": "string",
+                        "description": "Name of first person"
+                    },
+                    "person_b_name": {
+                        "type": "string",
+                        "description": "Name of second person"
+                    }
+                },
+                "required": ["person_a_name", "person_b_name"]
+            }
+        }
+    },
 ]
 
 SYSTEM_PROMPT = """You are a personal network assistant helping the user manage and query their professional network.
@@ -135,6 +233,20 @@ Your capabilities:
 3. List people in the network (shows both own and shared)
 4. Add new notes about people (ONLY for user's own contacts, not shared ones)
 5. Ask proactive questions to help fill gaps in profiles
+6. MERGE duplicate people (when two entries are the same person)
+7. FIND potential duplicates (suggest_merge_candidates)
+8. DELETE people from the network
+9. EDIT person names
+10. REJECT merge suggestions (mark as different people)
+
+## MERGE & DEDUP COMMANDS
+When user says things like:
+- "объедини X и Y" / "merge X and Y" → use merge_people
+- "X и Y это один человек" / "X and Y are the same person" → use merge_people
+- "найди дубликаты" / "find duplicates" → use suggest_merge_candidates
+- "X и Y это разные люди" / "X and Y are different" → use reject_merge
+- "удали X" / "delete X" → use delete_person
+- "переименуй X в Y" / "rename X to Y" → use edit_person
 
 Guidelines:
 - Be concise but helpful
@@ -144,7 +256,7 @@ Guidelines:
 - For ambiguous names, ask for clarification
 - Suggest non-obvious connections when relevant
 - Respond in the same language as the user
-- User can ONLY add notes to their own contacts (is_own=true, editable=true)
+- User can ONLY modify their own contacts (is_own=true, editable=true)
 
 PROACTIVE QUESTIONS — IMPORTANT:
 - After EVERY successful action (adding note, searching, showing person info), call get_pending_question
@@ -545,6 +657,148 @@ async def execute_tool(tool_name: str, args: dict, user_id: str) -> str:
             "question_text": question.get("question_text_ru") or question["question_text"],
             "question_type": question["question_type"]
         }, ensure_ascii=False)
+
+    elif tool_name == "merge_people":
+        dedup_service = get_dedup_service()
+
+        # Find person A (to keep)
+        person_a_result = supabase.table('person').select('person_id, display_name').eq(
+            'owner_id', user_id
+        ).ilike('display_name', f"%{args['person_a_name']}%").eq('status', 'active').execute()
+
+        if not person_a_result.data:
+            return f"Person '{args['person_a_name']}' not found in your contacts."
+        if len(person_a_result.data) > 1:
+            names = [p['display_name'] for p in person_a_result.data]
+            return f"Multiple people match '{args['person_a_name']}': {', '.join(names)}. Please be more specific."
+
+        # Find person B (to merge)
+        person_b_result = supabase.table('person').select('person_id, display_name').eq(
+            'owner_id', user_id
+        ).ilike('display_name', f"%{args['person_b_name']}%").eq('status', 'active').execute()
+
+        if not person_b_result.data:
+            return f"Person '{args['person_b_name']}' not found in your contacts."
+        if len(person_b_result.data) > 1:
+            names = [p['display_name'] for p in person_b_result.data]
+            return f"Multiple people match '{args['person_b_name']}': {', '.join(names)}. Please be more specific."
+
+        person_a = person_a_result.data[0]
+        person_b = person_b_result.data[0]
+
+        if person_a['person_id'] == person_b['person_id']:
+            return "These are the same person already."
+
+        # Perform merge
+        result = await dedup_service.merge_persons(
+            UUID(user_id),
+            UUID(person_a['person_id']),
+            UUID(person_b['person_id'])
+        )
+
+        return json.dumps({
+            "success": True,
+            "kept_person": person_a['display_name'],
+            "merged_person": person_b['display_name'],
+            "assertions_moved": result.assertions_moved,
+            "edges_moved": result.edges_moved,
+            "identities_moved": result.identities_moved
+        }, ensure_ascii=False)
+
+    elif tool_name == "suggest_merge_candidates":
+        dedup_service = get_dedup_service()
+        limit = args.get('limit', 5)
+
+        candidates = await dedup_service.find_all_duplicates(UUID(user_id), limit=limit)
+
+        if not candidates:
+            return "No potential duplicates found in your network."
+
+        return json.dumps({
+            "candidates": candidates,
+            "total": len(candidates)
+        }, ensure_ascii=False, indent=2)
+
+    elif tool_name == "delete_person":
+        # Find person
+        person_result = supabase.table('person').select('person_id, display_name').eq(
+            'owner_id', user_id
+        ).ilike('display_name', f"%{args['person_name']}%").eq('status', 'active').execute()
+
+        if not person_result.data:
+            return f"Person '{args['person_name']}' not found in your contacts."
+        if len(person_result.data) > 1:
+            names = [p['display_name'] for p in person_result.data]
+            return f"Multiple people match '{args['person_name']}': {', '.join(names)}. Please be more specific."
+
+        person = person_result.data[0]
+
+        # Soft delete
+        supabase.table('person').update({
+            'status': 'deleted',
+            'updated_at': datetime.utcnow().isoformat()
+        }).eq('person_id', person['person_id']).execute()
+
+        return f"Deleted '{person['display_name']}' from your network."
+
+    elif tool_name == "edit_person":
+        # Find person
+        person_result = supabase.table('person').select('person_id, display_name').eq(
+            'owner_id', user_id
+        ).ilike('display_name', f"%{args['current_name']}%").eq('status', 'active').execute()
+
+        if not person_result.data:
+            return f"Person '{args['current_name']}' not found in your contacts."
+        if len(person_result.data) > 1:
+            names = [p['display_name'] for p in person_result.data]
+            return f"Multiple people match '{args['current_name']}': {', '.join(names)}. Please be more specific."
+
+        person = person_result.data[0]
+        old_name = person['display_name']
+
+        # Update name
+        supabase.table('person').update({
+            'display_name': args['new_name'],
+            'updated_at': datetime.utcnow().isoformat()
+        }).eq('person_id', person['person_id']).execute()
+
+        return f"Renamed '{old_name}' to '{args['new_name']}'."
+
+    elif tool_name == "reject_merge":
+        dedup_service = get_dedup_service()
+
+        # Find person A
+        person_a_result = supabase.table('person').select('person_id, display_name').eq(
+            'owner_id', user_id
+        ).ilike('display_name', f"%{args['person_a_name']}%").eq('status', 'active').execute()
+
+        if not person_a_result.data:
+            return f"Person '{args['person_a_name']}' not found."
+        if len(person_a_result.data) > 1:
+            names = [p['display_name'] for p in person_a_result.data]
+            return f"Multiple people match '{args['person_a_name']}': {', '.join(names)}. Please be more specific."
+
+        # Find person B
+        person_b_result = supabase.table('person').select('person_id, display_name').eq(
+            'owner_id', user_id
+        ).ilike('display_name', f"%{args['person_b_name']}%").eq('status', 'active').execute()
+
+        if not person_b_result.data:
+            return f"Person '{args['person_b_name']}' not found."
+        if len(person_b_result.data) > 1:
+            names = [p['display_name'] for p in person_b_result.data]
+            return f"Multiple people match '{args['person_b_name']}': {', '.join(names)}. Please be more specific."
+
+        person_a = person_a_result.data[0]
+        person_b = person_b_result.data[0]
+
+        await dedup_service.reject_duplicate(
+            UUID(user_id),
+            UUID(person_a['person_id']),
+            UUID(person_b['person_id'])
+        )
+
+        return f"Marked '{person_a['display_name']}' and '{person_b['display_name']}' as different people."
 
     return f"Unknown tool: {tool_name}"
 
