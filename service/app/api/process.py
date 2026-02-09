@@ -299,3 +299,162 @@ async def get_processing_status(
         "processed": evidence["processed"],
         "error_message": evidence.get("error_message")
     }
+
+
+async def reextract_evidence(evidence_id: str, content: str, user_id: str):
+    """
+    Re-extract assertions from evidence using current prompts.
+    Matches to existing person records instead of creating new ones.
+    """
+    print(f"[REEXTRACT] Processing evidence {evidence_id}")
+    supabase = get_supabase_admin()
+
+    # 1. Delete old assertions linked to this evidence
+    supabase.table("assertion").delete().eq("evidence_id", evidence_id).execute()
+    print(f"[REEXTRACT] Deleted old assertions")
+
+    # 2. Get existing persons for this user
+    existing_persons = supabase.table("person").select(
+        "person_id, display_name"
+    ).eq("owner_id", user_id).eq("status", "active").execute()
+
+    person_name_map = {}  # lowercase name -> person_id
+    for p in existing_persons.data:
+        name_lower = p["display_name"].lower()
+        person_name_map[name_lower] = p["person_id"]
+        # Also add first name only for matching
+        first_name = name_lower.split()[0] if name_lower else ""
+        if first_name and first_name not in person_name_map:
+            person_name_map[first_name] = p["person_id"]
+
+    # 3. Re-extract with current prompts
+    extraction = extract_from_text_simple(content)
+    print(f"[REEXTRACT] Extracted {len(extraction.people)} people, {len(extraction.assertions)} assertions")
+
+    # 4. Map extracted people to existing persons
+    temp_to_person: dict[str, str] = {}  # temp_id -> person_id
+
+    for person in extraction.people:
+        name_lower = person.name.lower()
+        first_name = name_lower.split()[0] if name_lower else ""
+
+        # Try exact match first
+        if name_lower in person_name_map:
+            temp_to_person[person.temp_id] = person_name_map[name_lower]
+        # Try first name match
+        elif first_name in person_name_map:
+            temp_to_person[person.temp_id] = person_name_map[first_name]
+        # Try variations
+        else:
+            matched = False
+            for variation in person.name_variations:
+                var_lower = variation.lower()
+                if var_lower in person_name_map:
+                    temp_to_person[person.temp_id] = person_name_map[var_lower]
+                    matched = True
+                    break
+            # No match found - skip this person's assertions
+            if not matched:
+                print(f"[REEXTRACT] No match for '{person.name}', skipping")
+
+    # 5. Create new assertions linked to existing persons
+    assertions_created = 0
+    if extraction.assertions:
+        assertion_texts = []
+        valid_assertions = []
+
+        for assertion in extraction.assertions:
+            person_id = temp_to_person.get(assertion.subject)
+            if not person_id:
+                continue
+
+            person_name = ""
+            for p in extraction.people:
+                if p.temp_id == assertion.subject:
+                    person_name = p.name
+                    break
+
+            text = create_assertion_text(assertion.predicate, assertion.value, person_name)
+            assertion_texts.append(text)
+            valid_assertions.append((assertion, person_id))
+
+        # Generate embeddings
+        if assertion_texts:
+            embeddings = generate_embeddings_batch(assertion_texts)
+
+            for i, (assertion, person_id) in enumerate(valid_assertions):
+                supabase.table("assertion").insert({
+                    "subject_person_id": person_id,
+                    "predicate": assertion.predicate,
+                    "object_value": assertion.value,
+                    "confidence": assertion.confidence,
+                    "evidence_id": evidence_id,
+                    "scope": "personal",
+                    "embedding": embeddings[i] if i < len(embeddings) else None
+                }).execute()
+                assertions_created += 1
+
+    print(f"[REEXTRACT] Created {assertions_created} new assertions")
+    return assertions_created
+
+
+from pydantic import BaseModel
+
+class ReextractRequest(BaseModel):
+    user_id: str
+    admin_key: str
+
+
+@router.post("/reextract/admin")
+async def reextract_all_admin(
+    request: ReextractRequest,
+    background_tasks: BackgroundTasks
+):
+    """
+    Admin endpoint to re-extract all evidence for a user.
+    Requires admin_key matching SUPABASE_SERVICE_ROLE_KEY prefix.
+    """
+    settings = get_settings()
+
+    # Simple auth: check if admin_key matches service role key (first 20 chars)
+    if not request.admin_key or request.admin_key[:20] != settings.supabase_service_role_key[:20]:
+        raise HTTPException(status_code=403, detail="Invalid admin key")
+
+    user_id = request.user_id
+    supabase = get_supabase_admin()
+
+    # Get all processed evidence
+    evidence_result = supabase.table("raw_evidence").select(
+        "evidence_id, content"
+    ).eq("owner_id", user_id).eq("processed", True).execute()
+
+    if not evidence_result.data:
+        return {"status": "no_evidence", "message": "No processed evidence found"}
+
+    evidence_count = len(evidence_result.data)
+
+    async def reextract_all_async():
+        total_assertions = 0
+        errors = []
+
+        for evidence in evidence_result.data:
+            try:
+                count = await reextract_evidence(
+                    evidence["evidence_id"],
+                    evidence["content"],
+                    user_id
+                )
+                total_assertions += count
+            except Exception as e:
+                errors.append({"evidence_id": evidence["evidence_id"], "error": str(e)})
+                print(f"[REEXTRACT] Error for {evidence['evidence_id']}: {e}")
+
+        print(f"[REEXTRACT] Completed: {total_assertions} assertions from {evidence_count} evidence")
+
+    background_tasks.add_task(reextract_all_async)
+
+    return {
+        "status": "processing",
+        "evidence_count": evidence_count,
+        "message": f"Re-extraction started for {evidence_count} evidence records"
+    }
