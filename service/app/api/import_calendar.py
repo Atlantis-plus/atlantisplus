@@ -281,6 +281,33 @@ async def import_calendar(
             update_data['error_message'] = error
         supabase.table('raw_evidence').update(update_data).eq('evidence_id', evidence_id).execute()
 
+    def rollback_batch(batch_id: str, error_msg: str):
+        """Rollback all data created for this batch on error"""
+        try:
+            # Get all people created in this batch
+            people = supabase.table('person').select('person_id').eq(
+                'import_batch_id', batch_id
+            ).execute()
+            person_ids = [p['person_id'] for p in people.data] if people.data else []
+
+            if person_ids:
+                # Delete identities first
+                supabase.table('identity').delete().in_('person_id', person_ids).execute()
+                # Delete assertions
+                supabase.table('assertion').delete().in_('subject_person_id', person_ids).execute()
+                # Delete people
+                supabase.table('person').delete().in_('person_id', person_ids).execute()
+
+            # Mark batch as failed
+            supabase.table('import_batch').update({
+                'status': 'rolled_back'
+            }).eq('batch_id', batch_id).execute()
+
+            # Update evidence status
+            update_status('error', error=error_msg)
+        except Exception as e:
+            print(f"[CALENDAR IMPORT] Rollback failed: {e}")
+
     try:
         # Parse ICS file
         events, attendees = parse_ics_file(content, owner_email)
@@ -339,119 +366,130 @@ async def import_calendar(
     imported_meetings = 0
     new_person_ids = []
 
-    # Process each unique attendee
-    for email, info in attendees.items():
-        name = info["name"] or email.split('@')[0].replace('.', ' ').title()
+    try:
+        # Process each unique attendee
+        for email, info in attendees.items():
+            name = info["name"] or email.split('@')[0].replace('.', ' ').title()
 
-        # Check if person exists by email
-        existing = supabase.table('identity').select(
-            'person_id'
-        ).eq('namespace', 'email').eq('value', email).execute()
+            # Check if person exists by email
+            existing = supabase.table('identity').select(
+                'person_id'
+            ).eq('namespace', 'email').eq('value', email).execute()
 
-        if existing.data:
-            # Person exists by exact email match - add calendar context
-            person_id = existing.data[0]['person_id']
-            updated_existing += 1
-            is_new = False
-        else:
-            # No email match - always create new person
-            # (Name matching is too unreliable for auto-merge)
-            person_result = supabase.table('person').insert({
-                'owner_id': user_id,
-                'display_name': name,
-                'status': 'active',
-                'import_source': 'calendar',
-                'import_batch_id': batch_id
-            }).execute()
-
-            person_id = person_result.data[0]['person_id']
-            new_person_ids.append(person_id)
-            is_new = True
-
-            # Create email identity
-            supabase.table('identity').insert({
-                'person_id': person_id,
-                'namespace': 'email',
-                'value': email
-            }).execute()
-
-            # Create calendar_name identity
-            supabase.table('identity').insert({
-                'person_id': person_id,
-                'namespace': 'calendar_name',
-                'value': name
-            }).execute()
-
-            imported_people += 1
-
-            # Check for similar names and log as potential duplicates for review
-            # (NOT auto-merge - just record for later review)
-            similar_check = supabase.table('person').select(
-                'person_id', 'display_name'
-            ).eq('owner_id', user_id).neq(
-                'person_id', person_id
-            ).ilike(
-                'display_name', f"%{name.split()[0]}%"  # Only first name for fuzzy match
-            ).eq('status', 'active').limit(5).execute()
-
-            if similar_check.data:
-                for similar in similar_check.data:
-                    try:
-                        supabase.table('person_match_candidate').insert({
-                            'a_person_id': person_id,
-                            'b_person_id': similar['person_id'],
-                            'score': 0.5,  # Low score - just name similarity
-                            'reasons': {
-                                'type': 'name_similarity_on_import',
-                                'new_name': name,
-                                'existing_name': similar['display_name'],
-                                'source': 'calendar'
-                            },
-                            'status': 'pending'
-                        }).execute()
-                    except Exception as e:
-                        # Ignore duplicate candidate errors
-                        pass
-
-        # Find events with this attendee and create meeting assertions
-        person_events = [
-            e for e in events
-            if email in [a['email'] for a in e['attendees']]
-        ]
-
-        # Create summary assertion about meeting frequency
-        if info["count"] >= 3:
-            freq_text = f"Met {info['count']} times in calendar"
-            try:
-                embedding = generate_embedding(f"meeting frequency: {freq_text}")
-                supabase.table('assertion').insert({
-                    'subject_person_id': person_id,
-                    'predicate': 'contact_context',
-                    'object_value': freq_text,
-                    'confidence': 1.0,
-                    'scope': 'personal',
-                    'embedding': embedding
+            if existing.data:
+                # Person exists by exact email match - add calendar context
+                person_id = existing.data[0]['person_id']
+                updated_existing += 1
+                is_new = False
+            else:
+                # No email match - always create new person
+                # (Name matching is too unreliable for auto-merge)
+                person_result = supabase.table('person').insert({
+                    'owner_id': user_id,
+                    'display_name': name,
+                    'status': 'active',
+                    'import_source': 'calendar',
+                    'import_batch_id': batch_id
                 }).execute()
-            except:
-                pass
 
-        # Create assertions for notable meetings (first 5)
-        for event in person_events[:5]:
-            if event['summary'] and event['date']:
-                meeting_text = f"Meeting: {event['summary']} on {event['date'][:10]}"
+                person_id = person_result.data[0]['person_id']
+                new_person_ids.append(person_id)
+                is_new = True
+
+                # Create email identity (ignore if already exists)
                 try:
-                    embedding = generate_embedding(f"met_on: {meeting_text}")
+                    supabase.table('identity').insert({
+                        'person_id': person_id,
+                        'namespace': 'email',
+                        'value': email
+                    }).execute()
+                except Exception:
+                    pass  # Identity already exists
+
+                # Create calendar_name identity
+                try:
+                    supabase.table('identity').insert({
+                        'person_id': person_id,
+                        'namespace': 'calendar_name',
+                        'value': name
+                    }).execute()
+                except Exception:
+                    pass  # Identity already exists (same name, different person is OK now)
+
+                imported_people += 1
+
+                # Check for similar names and log as potential duplicates for review
+                # (NOT auto-merge - just record for later review)
+                similar_check = supabase.table('person').select(
+                    'person_id', 'display_name'
+                ).eq('owner_id', user_id).neq(
+                    'person_id', person_id
+                ).ilike(
+                    'display_name', f"%{name.split()[0]}%"  # Only first name for fuzzy match
+                ).eq('status', 'active').limit(5).execute()
+
+                if similar_check.data:
+                    for similar in similar_check.data:
+                        try:
+                            supabase.table('person_match_candidate').insert({
+                                'a_person_id': person_id,
+                                'b_person_id': similar['person_id'],
+                                'score': 0.5,  # Low score - just name similarity
+                                'reasons': {
+                                    'type': 'name_similarity_on_import',
+                                    'new_name': name,
+                                    'existing_name': similar['display_name'],
+                                    'source': 'calendar'
+                                },
+                                'status': 'pending'
+                            }).execute()
+                        except Exception:
+                            pass  # Ignore duplicate candidate errors
+
+            # Find events with this attendee and create meeting assertions
+            person_events = [
+                e for e in events
+                if email in [a['email'] for a in e['attendees']]
+            ]
+
+            # Create summary assertion about meeting frequency
+            if info["count"] >= 3:
+                freq_text = f"Met {info['count']} times in calendar"
+                try:
+                    embedding = generate_embedding(f"meeting frequency: {freq_text}")
                     supabase.table('assertion').insert({
                         'subject_person_id': person_id,
-                        'predicate': 'met_on',
-                        'object_value': meeting_text,
+                        'predicate': 'contact_context',
+                        'object_value': freq_text,
                         'confidence': 1.0,
                         'scope': 'personal',
                         'embedding': embedding
                     }).execute()
-                    imported_meetings += 1
-                except Exception as e:
-                    print(f"[CALENDAR IMPORT] Failed to create assertion: {e}")
+                except Exception:
+                    pass
+
+            # Create assertions for notable meetings (first 5)
+            for event in person_events[:5]:
+                if event['summary'] and event['date']:
+                    meeting_text = f"Meeting: {event['summary']} on {event['date'][:10]}"
+                    try:
+                        embedding = generate_embedding(f"met_on: {meeting_text}")
+                        supabase.table('assertion').insert({
+                            'subject_person_id': person_id,
+                            'predicate': 'met_on',
+                            'object_value': meeting_text,
+                            'confidence': 1.0,
+                            'scope': 'personal',
+                            'embedding': embedding
+                        }).execute()
+                        imported_meetings += 1
+                    except Exception as e:
+                        print(f"[CALENDAR IMPORT] Failed to create assertion: {e}")
+
+    except Exception as e:
+        # Rollback all changes on any error
+        rollback_batch(batch_id, str(e))
+        raise HTTPException(status_code=500, detail=f"Import failed: {str(e)}")
 
     # Update batch with final counts
     supabase.table('import_batch').update({

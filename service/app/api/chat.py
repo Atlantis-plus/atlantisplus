@@ -38,48 +38,59 @@ TOOLS = [
     {
         "type": "function",
         "function": {
-            "name": "search_network",
-            "description": "Search the COMMUNITY network for people matching a query. Searches both user's own contacts AND shared contacts from other users. Results include 'is_own' and 'source' fields.",
+            "name": "find_people",
+            "description": """Universal search for people. Returns person_id for each result.
+
+IMPORTANT: Use semantic_query for ANY meaning-based search (companies, skills, topics, meetings, etc.)
+It searches ALL facts about people, not just specific fields.
+
+Examples:
+- "who works at Google" → semantic_query="Google" (NOT company_contains!)
+- "AI experts" → semantic_query="AI expert"
+- "met at conference" → semantic_query="conference"
+- "related to ByteDance" → semantic_query="ByteDance"
+
+Filters (only for precise filtering, NOT for search):
+- name_contains/name_regex: filter by display name pattern
+- email_domain: filter by exact email domain
+- has_email: filter by email presence
+- import_source: filter by data source
+- company_contains: ONLY filters people with explicit 'works_at' assertion (rarely needed)""",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "query": {
+                    "semantic_query": {
                         "type": "string",
-                        "description": "The search query describing what kind of person or expertise is needed"
-                    }
-                },
-                "required": ["query"]
-            }
-        }
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "get_person_details",
-            "description": "Get detailed information about a specific person including all known facts and connections.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "person_name": {
+                        "description": "PRIMARY search method. Searches ALL facts about people by meaning. Use for companies, skills, topics, meetings, etc."
+                    },
+                    "name_contains": {
                         "type": "string",
-                        "description": "The name of the person to look up"
-                    }
-                },
-                "required": ["person_name"]
-            }
-        }
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "list_people",
-            "description": "List all people in the COMMUNITY network. Returns two groups: 'own_people' (user's contacts) and 'shared_people' (from other users).",
-            "parameters": {
-                "type": "object",
-                "properties": {
+                        "description": "Filter: name contains string"
+                    },
+                    "name_regex": {
+                        "type": "string",
+                        "description": "Filter: name matches regex (e.g., '[0-9]' for digits)"
+                    },
+                    "email_domain": {
+                        "type": "string",
+                        "description": "Filter: email from domain (e.g., 'zoom.us')"
+                    },
+                    "has_email": {
+                        "type": "boolean",
+                        "description": "Filter: true=with email, false=without"
+                    },
+                    "import_source": {
+                        "type": "string",
+                        "description": "Filter: data source",
+                        "enum": ["linkedin", "calendar", "voice_note"]
+                    },
+                    "company_contains": {
+                        "type": "string",
+                        "description": "Filter: ONLY people with 'works_at' field matching. Usually use semantic_query instead."
+                    },
                     "limit": {
                         "type": "integer",
-                        "description": "Maximum number of people to return per group",
+                        "description": "Maximum results (default 20)",
                         "default": 20
                     }
                 }
@@ -89,21 +100,45 @@ TOOLS = [
     {
         "type": "function",
         "function": {
-            "name": "add_note_about_person",
-            "description": "Add a new note or fact about a person. ONLY works for user's own contacts, not shared ones. If person doesn't exist, creates a new one.",
+            "name": "get_person_details",
+            "description": "Get detailed information about a person. Use person_id from find_people results.",
             "parameters": {
                 "type": "object",
                 "properties": {
+                    "person_id": {
+                        "type": "string",
+                        "description": "UUID of the person (preferred - from find_people results)"
+                    },
                     "person_name": {
                         "type": "string",
-                        "description": "Name of the person"
+                        "description": "Name to search (fallback if no person_id)"
+                    }
+                }
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "add_note_about_person",
+            "description": "Add a note/fact about a person. Use person_id from find_people. Creates new person if name provided and not found.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "person_id": {
+                        "type": "string",
+                        "description": "UUID of the person (preferred)"
+                    },
+                    "person_name": {
+                        "type": "string",
+                        "description": "Name (fallback, or to create new person)"
                     },
                     "note": {
                         "type": "string",
                         "description": "The note or fact to add"
                     }
                 },
-                "required": ["person_name", "note"]
+                "required": ["note"]
             }
         }
     },
@@ -127,20 +162,31 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "merge_people",
-            "description": "Merge two people who are actually the same person. Moves all facts and connections from person_b to person_a.",
+            "description": "Merge two people (same person). Use person_id from find_people. Can also rename result.",
             "parameters": {
                 "type": "object",
                 "properties": {
+                    "person_a_id": {
+                        "type": "string",
+                        "description": "UUID of person to KEEP (preferred)"
+                    },
+                    "person_b_id": {
+                        "type": "string",
+                        "description": "UUID of person to MERGE INTO person_a (preferred)"
+                    },
                     "person_a_name": {
                         "type": "string",
-                        "description": "Name of the person to KEEP (canonical)"
+                        "description": "Name fallback for person_a"
                     },
                     "person_b_name": {
                         "type": "string",
-                        "description": "Name of the person to MERGE INTO person_a (will be marked as merged)"
+                        "description": "Name fallback for person_b"
+                    },
+                    "new_display_name": {
+                        "type": "string",
+                        "description": "Optional: rename merged person to this"
                     }
-                },
-                "required": ["person_a_name", "person_b_name"]
+                }
             }
         }
     },
@@ -148,13 +194,13 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "suggest_merge_candidates",
-            "description": "Find potential duplicate people in the network who might be the same person. Returns pairs with similarity scores.",
+            "description": "Find potential duplicates. Returns person_id pairs with similarity scores.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "limit": {
                         "type": "integer",
-                        "description": "Maximum number of candidates to return",
+                        "description": "Maximum candidates to return",
                         "default": 5
                     }
                 }
@@ -165,16 +211,19 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "delete_person",
-            "description": "Delete a person from the network (soft delete). ONLY works for user's own contacts.",
+            "description": "Delete a person (soft delete). Use person_id from find_people.",
             "parameters": {
                 "type": "object",
                 "properties": {
+                    "person_id": {
+                        "type": "string",
+                        "description": "UUID of person to delete (preferred)"
+                    },
                     "person_name": {
                         "type": "string",
-                        "description": "Name of the person to delete"
+                        "description": "Name fallback"
                     }
-                },
-                "required": ["person_name"]
+                }
             }
         }
     },
@@ -182,20 +231,24 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "edit_person",
-            "description": "Edit a person's display name. ONLY works for user's own contacts.",
+            "description": "Rename a person. Use person_id from find_people.",
             "parameters": {
                 "type": "object",
                 "properties": {
+                    "person_id": {
+                        "type": "string",
+                        "description": "UUID of person to edit (preferred)"
+                    },
                     "current_name": {
                         "type": "string",
-                        "description": "Current name of the person"
+                        "description": "Name fallback to find person"
                     },
                     "new_name": {
                         "type": "string",
                         "description": "New display name"
                     }
                 },
-                "required": ["current_name", "new_name"]
+                "required": ["new_name"]
             }
         }
     },
@@ -203,48 +256,25 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "reject_merge",
-            "description": "Mark two people as definitely NOT the same person (reject duplicate suggestion).",
+            "description": "Mark two people as NOT the same (reject duplicate). Use person_id from find_people.",
             "parameters": {
                 "type": "object",
                 "properties": {
+                    "person_a_id": {
+                        "type": "string",
+                        "description": "UUID of first person (preferred)"
+                    },
+                    "person_b_id": {
+                        "type": "string",
+                        "description": "UUID of second person (preferred)"
+                    },
                     "person_a_name": {
                         "type": "string",
-                        "description": "Name of first person"
+                        "description": "Name fallback"
                     },
                     "person_b_name": {
                         "type": "string",
-                        "description": "Name of second person"
-                    }
-                },
-                "required": ["person_a_name", "person_b_name"]
-            }
-        }
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "list_people_by_criteria",
-            "description": "Find people matching specific criteria like import source, company, has email, or meeting frequency. Useful for filtering imported contacts.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "import_source": {
-                        "type": "string",
-                        "description": "Filter by source: 'linkedin', 'calendar', or 'voice_note'",
-                        "enum": ["linkedin", "calendar", "voice_note"]
-                    },
-                    "company_pattern": {
-                        "type": "string",
-                        "description": "Substring to match in company name (case insensitive)"
-                    },
-                    "has_email": {
-                        "type": "boolean",
-                        "description": "If true, only people with email; if false, only without email"
-                    },
-                    "limit": {
-                        "type": "integer",
-                        "description": "Maximum number of results",
-                        "default": 20
+                        "description": "Name fallback"
                     }
                 }
             }
@@ -254,26 +284,38 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "bulk_delete_people",
-            "description": "Delete multiple people matching criteria. REQUIRES explicit user confirmation. Returns count of deleted.",
+            "description": "Delete multiple people matching criteria. Uses same filters as find_people. REQUIRES confirm=true.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "import_source": {
+                    "name_contains": {
                         "type": "string",
-                        "description": "Delete only from this source: 'linkedin', 'calendar'",
-                        "enum": ["linkedin", "calendar"]
+                        "description": "Delete people with name containing this"
                     },
-                    "company_pattern": {
+                    "name_regex": {
                         "type": "string",
-                        "description": "Delete only people from companies matching this pattern"
+                        "description": "Delete people with name matching regex"
+                    },
+                    "email_domain": {
+                        "type": "string",
+                        "description": "Delete people with email from this domain"
                     },
                     "has_email": {
                         "type": "boolean",
-                        "description": "If false, delete only people without email"
+                        "description": "If false, delete only without email"
+                    },
+                    "import_source": {
+                        "type": "string",
+                        "description": "Delete only from this source",
+                        "enum": ["linkedin", "calendar", "voice_note"]
+                    },
+                    "company_contains": {
+                        "type": "string",
+                        "description": "Delete people from companies matching this"
                     },
                     "confirm": {
                         "type": "boolean",
-                        "description": "MUST be true to actually delete. If false, returns preview only."
+                        "description": "MUST be true to delete. false = preview only."
                     }
                 },
                 "required": ["confirm"]
@@ -319,52 +361,45 @@ TOOLS = [
 SYSTEM_PROMPT = """You are a personal network assistant helping the user manage and query their professional network.
 
 You have access to COMMUNITY DATA - people added by the user AND by other users in the community.
-When showing results, indicate whether a person is "Мой контакт" (user's own) or "Shared" (from others).
 
-Your capabilities:
-1. Search for people based on skills, expertise, companies, or any criteria (searches ALL community data)
-2. Look up detailed information about specific people (from any community member)
-3. List people in the network (shows both own and shared)
-4. Add new notes about people (ONLY for user's own contacts, not shared ones)
-5. Ask proactive questions to help fill gaps in profiles
-6. MERGE duplicate people (when two entries are the same person)
-7. FIND potential duplicates (suggest_merge_candidates)
-8. DELETE people from the network
-9. EDIT person names
-10. REJECT merge suggestions (mark as different people)
+## CRITICAL: USE person_id FOR ALL OPERATIONS
 
-## MERGE & DEDUP COMMANDS
-When user says things like:
-- "объедини X и Y" / "merge X and Y" → use merge_people
-- "X и Y это один человек" / "X and Y are the same person" → use merge_people
-- "найди дубликаты" / "find duplicates" → use suggest_merge_candidates
-- "X и Y это разные люди" / "X and Y are different" → use reject_merge
-- "удали X" / "delete X" → use delete_person
-- "переименуй X в Y" / "rename X to Y" → use edit_person
+Every find_people result includes `person_id`. ALWAYS use person_id (not names) for subsequent operations:
 
-## IMPORT MANAGEMENT COMMANDS
-When user says things like:
-- "покажи всех из LinkedIn" / "show all from LinkedIn" → use list_people_by_criteria(import_source="linkedin")
-- "покажи всех из Google" / "who is from Google" → use list_people_by_criteria(company_pattern="Google")
-- "кто без email" / "who has no email" → use list_people_by_criteria(has_email=false)
-- "удали всех без email" / "delete all without email" → use bulk_delete_people(has_email=false, confirm=true)
-- "удали всех рекрутеров" → use list_people_by_criteria first, then bulk_delete_people
-- "сколько людей из календаря?" / "how many from calendar" → use get_import_stats(import_source="calendar")
-- "статистика импорта" / "import statistics" → use get_import_stats()
-- "откати последний импорт" / "undo last import" → first get_import_stats, then rollback_import
+1. find_people → returns list with person_id for each person
+2. merge_people(person_a_id=..., person_b_id=...) - use IDs from step 1
+3. edit_person(person_id=..., new_name=...) - use ID
+4. delete_person(person_id=...) - use ID
+5. add_note_about_person(person_id=..., note=...) - use ID
 
-IMPORTANT for bulk operations:
-- ALWAYS preview first with confirm=false before actual delete
-- Ask user to confirm before setting confirm=true
-- Show exactly what will be deleted
+This ensures operations work even after renames, and avoids name ambiguity.
+
+## FIND_PEOPLE - UNIVERSAL SEARCH
+| User says | Use |
+|-----------|-----|
+| "кто эксперт в AI" | find_people(semantic_query="AI expert") |
+| "все с цифрой в имени" | find_people(name_regex="[0-9]") |
+| "контакты с zoom.us" | find_people(email_domain="zoom.us") |
+| "все без email" | find_people(has_email=false) |
+| "все из календаря" | find_people(import_source="calendar") |
+| "кто из Google" | find_people(company_contains="Google") |
+| "покажи всех" | find_people() |
+
+## MERGE & EDIT WORKFLOW
+Example: User says "объедини Daliya227 и daliya227@yahoo.com, назови Daliya Safiullina"
+
+1. find_people(name_contains="Daliya227") → get person_ids
+2. merge_people(person_a_id="...", person_b_id="...", new_display_name="Daliya Safiullina")
+
+All in one atomic operation using IDs!
+
+## BULK OPERATIONS
+- ALWAYS preview first: bulk_delete_people(..., confirm=false)
+- Show what will be deleted
+- Then: bulk_delete_people(..., confirm=true)
 
 Guidelines:
 - Be concise but helpful
-- When searching, explain WHY certain people might be relevant
-- ALWAYS mention if a person is from shared data vs user's own
-- If the user mentions someone new, offer to add them
-- For ambiguous names, ask for clarification
-- Suggest non-obvious connections when relevant
 - Respond in the same language as the user
 - User can ONLY modify their own contacts (is_own=true, editable=true)
 
@@ -403,160 +438,168 @@ async def execute_tool(tool_name: str, args: dict, user_id: str) -> str:
     settings = get_settings()
     supabase = get_supabase_admin()
 
-    if tool_name == "search_network":
-        # Generate embedding for query
-        query_embedding = generate_embedding(args["query"])
+    if tool_name == "find_people":
+        limit = args.get('limit', 20)
+        print(f"[FIND_PEOPLE] Args: {args}, user_id: {user_id}")
 
-        # Semantic search across ALL users (community sharing)
-        match_result = supabase.rpc(
-            'match_assertions_community',
-            {
-                'query_embedding': query_embedding,
-                'match_threshold': 0.25,  # Lowered from 0.3 to catch more variations
-                'match_count': 20
-            }
-        ).execute()
+        has_structural_filters = any([
+            args.get('name_regex'), args.get('name_contains'), args.get('email_domain'),
+            args.get('has_email') is not None, args.get('import_source'), args.get('company_contains')
+        ])
 
-        print(f"[SEARCH] Query: {args['query']}")
-        print(f"[SEARCH] Found {len(match_result.data) if match_result.data else 0} matching assertions")
-        if match_result.data:
-            for i, match in enumerate(match_result.data[:5]):
-                print(f"[SEARCH] Match {i+1}: person_id={match['subject_person_id']}, similarity={match['similarity']:.3f}, predicate={match['predicate']}, value={match['object_value'][:50]}")
-
-        if not match_result.data:
-            return "No relevant people found for this query."
-
-        # Group by person
-        person_facts = {}
-        person_ids = set()
-        person_owners = {}  # Track owner of each person
-        for match in match_result.data:
-            pid = match['subject_person_id']
-            person_ids.add(pid)
-            person_owners[pid] = match.get('owner_id')
-            if pid not in person_facts:
-                person_facts[pid] = []
-            person_facts[pid].append({
-                'fact': f"{match['predicate']}: {match['object_value']}",
-                'similarity': match['similarity']
-            })
-
-        # Get person names and owner info
-        people = supabase.table('person').select('person_id, display_name, owner_id').in_(
-            'person_id', list(person_ids)
-        ).execute()
-
-        name_map = {p['person_id']: p['display_name'] for p in people.data}
-        owner_map = {p['person_id']: p['owner_id'] for p in people.data}
-
-        results = []
-        for pid, facts in person_facts.items():
-            name = name_map.get(pid, 'Unknown')
-            avg_sim = sum(f['similarity'] for f in facts) / len(facts)
-            fact_list = [f['fact'] for f in facts[:5]]
-            owner_id_of_person = owner_map.get(pid)
-            is_own = owner_id_of_person == user_id
-            results.append({
-                'name': name,
-                'relevance': round(avg_sim, 2),
-                'facts': fact_list,
-                'is_own': is_own,
-                'source': 'Мой контакт' if is_own else 'Shared'
-            })
-
-        results.sort(key=lambda x: x['relevance'], reverse=True)
-        return json.dumps(results[:10], ensure_ascii=False, indent=2)
-
-    elif tool_name == "get_person_details":
-        search_name = args['person_name']
-
-        # Russian name synonyms (diminutives ↔ full names)
-        NAME_SYNONYMS = {
-            'вася': ['василий', 'васёк', 'васька'],
-            'василий': ['вася', 'васёк', 'васька'],
-            'петя': ['пётр', 'петр', 'петька'],
-            'пётр': ['петя', 'петька'],
-            'петр': ['петя', 'петька'],
-            'саша': ['александр', 'александра', 'сашка', 'шура'],
-            'александр': ['саша', 'сашка', 'шура'],
-            'коля': ['николай', 'колян'],
-            'николай': ['коля', 'колян'],
-            'миша': ['михаил', 'мишка'],
-            'михаил': ['миша', 'мишка'],
-            'дима': ['дмитрий', 'димка', 'митя'],
-            'дмитрий': ['дима', 'димка', 'митя'],
-            'женя': ['евгений', 'евгения'],
-            'евгений': ['женя'],
-            'лёша': ['алексей', 'лёха', 'леша', 'леха'],
-            'алексей': ['лёша', 'лёха', 'леша', 'леха'],
-            'серёжа': ['сергей', 'серёга', 'сережа'],
-            'сергей': ['серёжа', 'серёга', 'сережа'],
-            'андрей': ['андрюша', 'андрюха'],
-            'наташа': ['наталья', 'наталия', 'ната'],
-            'наталья': ['наташа', 'ната'],
-            'маша': ['мария', 'машка'],
-            'мария': ['маша', 'машка'],
-            'катя': ['екатерина', 'катюша'],
-            'екатерина': ['катя', 'катюша'],
-            'оля': ['ольга'],
-            'ольга': ['оля'],
-            'таня': ['татьяна'],
-            'татьяна': ['таня'],
-        }
-
-        # Get all name variants to search
-        search_lower = search_name.lower()
-        name_variants = [search_name]
-        if search_lower in NAME_SYNONYMS:
-            name_variants.extend(NAME_SYNONYMS[search_lower])
-
-        # Strategy 1: Exact substring match on display_name (with synonyms) - across ALL users
-        person_result = None
-        for name_variant in name_variants:
-            person_result = supabase.table('person').select(
-                'person_id, display_name, summary, owner_id'
-            ).ilike(
-                'display_name', f"%{name_variant}%"
-            ).eq('status', 'active').execute()
-            if person_result.data:
-                break
-
-        # Strategy 2: Fuzzy match using pg_trgm - across ALL users
-        if not person_result or not person_result.data:
-            fuzzy_result = supabase.rpc(
-                'find_similar_names_community',
+        # If semantic_query is primary (no structural filters), do semantic search first
+        if args.get('semantic_query') and not has_structural_filters:
+            print(f"[FIND_PEOPLE] Semantic-only search for: {args['semantic_query']}")
+            query_embedding = generate_embedding(args['semantic_query'])
+            match_result = supabase.rpc(
+                'match_assertions_community',
                 {
-                    'p_name': search_name,
-                    'p_threshold': 0.3
+                    'query_embedding': query_embedding,
+                    'match_threshold': 0.25,
+                    'match_count': limit * 3
                 }
             ).execute()
 
-            if fuzzy_result.data:
-                person_ids = [r['person_id'] for r in fuzzy_result.data]
-                person_result = supabase.table('person').select(
-                    'person_id, display_name, summary, owner_id'
-                ).in_('person_id', person_ids).eq('status', 'active').execute()
+            if not match_result.data:
+                return json.dumps({'people': [], 'total': 0, 'message': 'No people match the query'}, ensure_ascii=False)
 
-        # Strategy 3: Search in identities (freeform_name variations)
-        if not person_result or not person_result.data:
-            identity_result = supabase.table('identity').select(
-                'person_id'
-            ).eq('namespace', 'freeform_name').ilike(
-                'value', f"%{search_name}%"
+            # Get unique person_ids and fetch their details
+            person_ids = list(set(m['subject_person_id'] for m in match_result.data))
+            people_result = supabase.table('person').select(
+                'person_id, display_name, import_source, owner_id'
+            ).in_('person_id', person_ids).eq('owner_id', user_id).eq('status', 'active').execute()
+
+            # Get email status
+            email_check = supabase.table('identity').select('person_id').in_(
+                'person_id', person_ids
+            ).eq('namespace', 'email').execute()
+            has_email_ids = set(e['person_id'] for e in email_check.data or [])
+
+            results = []
+            for p in (people_result.data or [])[:limit]:
+                results.append({
+                    'person_id': p['person_id'],
+                    'name': p['display_name'],
+                    'import_source': p.get('import_source') or 'manual',
+                    'has_email': p['person_id'] in has_email_ids,
+                    'is_own': True,
+                    'source': 'Мой контакт'
+                })
+
+            print(f"[FIND_PEOPLE] Semantic search found {len(results)} people")
+            return json.dumps({
+                'people': results,
+                'total': len(people_result.data or []),
+                'showing': len(results)
+            }, ensure_ascii=False, indent=2)
+
+        # Structural filters: use SQL function
+        result = supabase.rpc('find_people_filtered', {
+            'p_owner_id': user_id,
+            'p_name_regex': args.get('name_regex'),
+            'p_name_contains': args.get('name_contains'),
+            'p_email_domain': args.get('email_domain'),
+            'p_has_email': args.get('has_email'),
+            'p_import_source': args.get('import_source'),
+            'p_company_contains': args.get('company_contains'),
+            'p_limit': limit * 5
+        }).execute()
+
+        print(f"[FIND_PEOPLE] SQL function returned {len(result.data) if result.data else 0} people")
+
+        if not result.data:
+            return json.dumps({'people': [], 'total': 0, 'message': 'No people match the criteria'}, ensure_ascii=False)
+
+        # Apply semantic filter on top if provided with structural filters
+        filtered_people = result.data
+        if args.get('semantic_query'):
+            query_embedding = generate_embedding(args['semantic_query'])
+            match_result = supabase.rpc(
+                'match_assertions_community',
+                {'query_embedding': query_embedding, 'match_threshold': 0.25, 'match_count': 100}
             ).execute()
+            if match_result.data:
+                semantic_ids = set(m['subject_person_id'] for m in match_result.data)
+                filtered_people = [p for p in filtered_people if p['person_id'] in semantic_ids]
+            else:
+                filtered_people = []
 
-            if identity_result.data:
-                person_ids = list(set(i['person_id'] for i in identity_result.data))
+        results = []
+        for p in filtered_people[:limit]:
+            results.append({
+                'person_id': p['person_id'],
+                'name': p['display_name'],
+                'import_source': p.get('import_source') or 'manual',
+                'has_email': p.get('has_email', False),
+                'is_own': True,
+                'source': 'Мой контакт'
+            })
+
+        return json.dumps({
+            'people': results,
+            'total': len(filtered_people),
+            'showing': len(results)
+        }, ensure_ascii=False, indent=2)
+
+    elif tool_name == "get_person_details":
+        # Prefer person_id if provided
+        if args.get('person_id'):
+            person_result = supabase.table('person').select(
+                'person_id, display_name, summary, owner_id'
+            ).eq('person_id', args['person_id']).eq('status', 'active').execute()
+            if not person_result.data:
+                return f"Person with ID {args['person_id']} not found."
+        elif args.get('person_name'):
+            search_name = args['person_name']
+            # Fallback to name search (existing logic below)
+            person_result = None
+        else:
+            return "Please provide person_id or person_name."
+
+        # Name search fallback (only if no person_id)
+        if not args.get('person_id'):
+            search_name = args['person_name']
+            # Russian name synonyms (diminutives ↔ full names)
+            NAME_SYNONYMS = {
+                'вася': ['василий', 'васёк', 'васька'],
+                'василий': ['вася', 'васёк', 'васька'],
+                'петя': ['пётр', 'петр', 'петька'],
+                'саша': ['александр', 'александра', 'сашка', 'шура'],
+                'коля': ['николай', 'колян'],
+                'миша': ['михаил', 'мишка'],
+                'дима': ['дмитрий', 'димка', 'митя'],
+                'женя': ['евгений', 'евгения'],
+                'лёша': ['алексей', 'лёха', 'леша'],
+                'серёжа': ['сергей', 'серёга'],
+                'наташа': ['наталья', 'ната'],
+                'маша': ['мария', 'машка'],
+                'катя': ['екатерина', 'катюша'],
+            }
+
+            search_lower = search_name.lower()
+            name_variants = [search_name]
+            if search_lower in NAME_SYNONYMS:
+                name_variants.extend(NAME_SYNONYMS[search_lower])
+
+            person_result = None
+            for name_variant in name_variants:
                 person_result = supabase.table('person').select(
                     'person_id, display_name, summary, owner_id'
-                ).in_('person_id', person_ids).eq('status', 'active').execute()
+                ).ilike('display_name', f"%{name_variant}%").eq('status', 'active').execute()
+                if person_result.data:
+                    break
 
-        if not person_result or not person_result.data:
-            return f"Person '{search_name}' not found. Try a different spelling or add them first."
+            if not person_result or not person_result.data:
+                return f"Person '{search_name}' not found. Try find_people first to get person_id."
 
-        if len(person_result.data) > 1:
-            names = [p['display_name'] for p in person_result.data]
-            return f"Multiple people match '{args['person_name']}': {', '.join(names)}. Please be more specific."
+            if len(person_result.data) > 1:
+                # Return list with IDs so user can pick
+                people_list = [{'person_id': p['person_id'], 'name': p['display_name']} for p in person_result.data]
+                return json.dumps({
+                    'error': 'multiple_matches',
+                    'message': f"Multiple people match '{search_name}'. Use person_id:",
+                    'matches': people_list
+                }, ensure_ascii=False)
 
         person = person_result.data[0]
         is_own_person = person.get('owner_id') == user_id
@@ -590,64 +633,45 @@ async def execute_tool(tool_name: str, args: dict, user_id: str) -> str:
         }
         return json.dumps(result, ensure_ascii=False, indent=2)
 
-    elif tool_name == "list_people":
-        limit = args.get('limit', 20)
-
-        # Get ALL people (community sharing)
-        people = supabase.table('person').select(
-            'person_id, display_name, summary, owner_id'
-        ).eq('status', 'active').limit(limit * 2).execute()  # Get more to split
-
-        if not people.data:
-            return "No people in the network yet. Start by adding notes about people you know."
-
-        # Split into own and shared
-        own_people = []
-        shared_people = []
-        for p in people.data:
-            person_info = {
-                'name': p['display_name'],
-                'summary': p.get('summary', ''),
-                'is_own': p['owner_id'] == user_id,
-                'source': 'Мой контакт' if p['owner_id'] == user_id else 'Shared'
-            }
-            if p['owner_id'] == user_id:
-                own_people.append(person_info)
-            else:
-                shared_people.append(person_info)
-
-        result = {
-            'own_people': own_people[:limit],
-            'shared_people': shared_people[:limit],
-            'total_own': len(own_people),
-            'total_shared': len(shared_people)
-        }
-        return json.dumps(result, ensure_ascii=False, indent=2)
-
     elif tool_name == "add_note_about_person":
-        # Find or create person
-        person_result = supabase.table('person').select('person_id, display_name').eq(
-            'owner_id', user_id
-        ).ilike('display_name', f"%{args['person_name']}%").eq('status', 'active').execute()
-
-        if not person_result.data:
-            # Create new person
-            new_person = supabase.table('person').insert({
-                'owner_id': user_id,
-                'display_name': args['person_name']
-            }).execute()
-            person_id = new_person.data[0]['person_id']
-            person_name = args['person_name']
-            created_new = True
-        elif len(person_result.data) > 1:
-            names = [p['display_name'] for p in person_result.data]
-            return f"Multiple people match '{args['person_name']}': {', '.join(names)}. Please be more specific."
-        else:
+        # Prefer person_id
+        created_new = False
+        if args.get('person_id'):
+            person_result = supabase.table('person').select('person_id, display_name').eq(
+                'person_id', args['person_id']
+            ).eq('owner_id', user_id).eq('status', 'active').execute()
+            if not person_result.data:
+                return f"Person with ID {args['person_id']} not found or not yours."
             person_id = person_result.data[0]['person_id']
             person_name = person_result.data[0]['display_name']
-            created_new = False
+        elif args.get('person_name'):
+            # Find or create by name
+            person_result = supabase.table('person').select('person_id, display_name').eq(
+                'owner_id', user_id
+            ).ilike('display_name', f"%{args['person_name']}%").eq('status', 'active').execute()
 
-        # Create raw evidence
+            if not person_result.data:
+                new_person = supabase.table('person').insert({
+                    'owner_id': user_id,
+                    'display_name': args['person_name']
+                }).execute()
+                person_id = new_person.data[0]['person_id']
+                person_name = args['person_name']
+                created_new = True
+            elif len(person_result.data) > 1:
+                people_list = [{'person_id': p['person_id'], 'name': p['display_name']} for p in person_result.data]
+                return json.dumps({
+                    'error': 'multiple_matches',
+                    'message': 'Multiple matches. Use person_id:',
+                    'matches': people_list
+                }, ensure_ascii=False)
+            else:
+                person_id = person_result.data[0]['person_id']
+                person_name = person_result.data[0]['display_name']
+        else:
+            return "Please provide person_id or person_name."
+
+        # Create raw evidence and assertion
         evidence = supabase.table('raw_evidence').insert({
             'owner_id': user_id,
             'source_type': 'chat_message',
@@ -656,7 +680,6 @@ async def execute_tool(tool_name: str, args: dict, user_id: str) -> str:
             'processing_status': 'done'
         }).execute()
 
-        # Add assertion
         embedding = generate_embedding(args['note'])
         supabase.table('assertion').insert({
             'subject_person_id': person_id,
@@ -668,9 +691,8 @@ async def execute_tool(tool_name: str, args: dict, user_id: str) -> str:
         }).execute()
 
         if created_new:
-            return f"Created new person '{person_name}' and added the note."
-        else:
-            return f"Added note about {person_name}."
+            return json.dumps({'success': True, 'person_id': person_id, 'message': f"Created '{person_name}' and added note."}, ensure_ascii=False)
+        return json.dumps({'success': True, 'person_id': person_id, 'message': f"Added note about {person_name}."}, ensure_ascii=False)
 
     elif tool_name == "get_pending_question":
         # Check rate limit first
@@ -771,30 +793,34 @@ async def execute_tool(tool_name: str, args: dict, user_id: str) -> str:
     elif tool_name == "merge_people":
         dedup_service = get_dedup_service()
 
-        # Find person A (to keep)
-        person_a_result = supabase.table('person').select('person_id, display_name').eq(
-            'owner_id', user_id
-        ).ilike('display_name', f"%{args['person_a_name']}%").eq('status', 'active').execute()
+        # Helper to find person by ID or name
+        def find_person(id_key, name_key):
+            if args.get(id_key):
+                result = supabase.table('person').select('person_id, display_name').eq(
+                    'person_id', args[id_key]
+                ).eq('owner_id', user_id).eq('status', 'active').execute()
+                if not result.data:
+                    return None, f"Person with ID {args[id_key]} not found."
+                return result.data[0], None
+            elif args.get(name_key):
+                result = supabase.table('person').select('person_id, display_name').eq(
+                    'owner_id', user_id
+                ).ilike('display_name', f"%{args[name_key]}%").eq('status', 'active').execute()
+                if not result.data:
+                    return None, f"Person '{args[name_key]}' not found."
+                if len(result.data) > 1:
+                    people_list = [{'person_id': p['person_id'], 'name': p['display_name']} for p in result.data]
+                    return None, json.dumps({'error': 'multiple_matches', 'matches': people_list}, ensure_ascii=False)
+                return result.data[0], None
+            return None, "Missing person_id or name"
 
-        if not person_a_result.data:
-            return f"Person '{args['person_a_name']}' not found in your contacts."
-        if len(person_a_result.data) > 1:
-            names = [p['display_name'] for p in person_a_result.data]
-            return f"Multiple people match '{args['person_a_name']}': {', '.join(names)}. Please be more specific."
+        person_a, error_a = find_person('person_a_id', 'person_a_name')
+        if error_a:
+            return error_a
 
-        # Find person B (to merge)
-        person_b_result = supabase.table('person').select('person_id, display_name').eq(
-            'owner_id', user_id
-        ).ilike('display_name', f"%{args['person_b_name']}%").eq('status', 'active').execute()
-
-        if not person_b_result.data:
-            return f"Person '{args['person_b_name']}' not found in your contacts."
-        if len(person_b_result.data) > 1:
-            names = [p['display_name'] for p in person_b_result.data]
-            return f"Multiple people match '{args['person_b_name']}': {', '.join(names)}. Please be more specific."
-
-        person_a = person_a_result.data[0]
-        person_b = person_b_result.data[0]
+        person_b, error_b = find_person('person_b_id', 'person_b_name')
+        if error_b:
+            return error_b
 
         if person_a['person_id'] == person_b['person_id']:
             return "These are the same person already."
@@ -806,10 +832,20 @@ async def execute_tool(tool_name: str, args: dict, user_id: str) -> str:
             UUID(person_b['person_id'])
         )
 
+        # Rename if requested
+        final_name = person_a['display_name']
+        if args.get('new_display_name'):
+            supabase.table('person').update({
+                'display_name': args['new_display_name'],
+                'updated_at': datetime.utcnow().isoformat()
+            }).eq('person_id', person_a['person_id']).execute()
+            final_name = args['new_display_name']
+
         return json.dumps({
             "success": True,
-            "kept_person": person_a['display_name'],
-            "merged_person": person_b['display_name'],
+            "person_id": person_a['person_id'],
+            "final_name": final_name,
+            "merged_from": person_b['display_name'],
             "assertions_moved": result.assertions_moved,
             "edges_moved": result.edges_moved,
             "identities_moved": result.identities_moved
@@ -830,77 +866,88 @@ async def execute_tool(tool_name: str, args: dict, user_id: str) -> str:
         }, ensure_ascii=False, indent=2)
 
     elif tool_name == "delete_person":
-        # Find person
-        person_result = supabase.table('person').select('person_id, display_name').eq(
-            'owner_id', user_id
-        ).ilike('display_name', f"%{args['person_name']}%").eq('status', 'active').execute()
-
-        if not person_result.data:
-            return f"Person '{args['person_name']}' not found in your contacts."
-        if len(person_result.data) > 1:
-            names = [p['display_name'] for p in person_result.data]
-            return f"Multiple people match '{args['person_name']}': {', '.join(names)}. Please be more specific."
+        # Prefer person_id
+        if args.get('person_id'):
+            person_result = supabase.table('person').select('person_id, display_name').eq(
+                'person_id', args['person_id']
+            ).eq('owner_id', user_id).eq('status', 'active').execute()
+            if not person_result.data:
+                return f"Person with ID {args['person_id']} not found."
+        elif args.get('person_name'):
+            person_result = supabase.table('person').select('person_id, display_name').eq(
+                'owner_id', user_id
+            ).ilike('display_name', f"%{args['person_name']}%").eq('status', 'active').execute()
+            if not person_result.data:
+                return f"Person '{args['person_name']}' not found."
+            if len(person_result.data) > 1:
+                people_list = [{'person_id': p['person_id'], 'name': p['display_name']} for p in person_result.data]
+                return json.dumps({'error': 'multiple_matches', 'matches': people_list}, ensure_ascii=False)
+        else:
+            return "Please provide person_id or person_name."
 
         person = person_result.data[0]
-
-        # Soft delete
         supabase.table('person').update({
             'status': 'deleted',
             'updated_at': datetime.utcnow().isoformat()
         }).eq('person_id', person['person_id']).execute()
 
-        return f"Deleted '{person['display_name']}' from your network."
+        return json.dumps({'success': True, 'deleted': person['display_name']}, ensure_ascii=False)
 
     elif tool_name == "edit_person":
-        # Find person
-        person_result = supabase.table('person').select('person_id, display_name').eq(
-            'owner_id', user_id
-        ).ilike('display_name', f"%{args['current_name']}%").eq('status', 'active').execute()
-
-        if not person_result.data:
-            return f"Person '{args['current_name']}' not found in your contacts."
-        if len(person_result.data) > 1:
-            names = [p['display_name'] for p in person_result.data]
-            return f"Multiple people match '{args['current_name']}': {', '.join(names)}. Please be more specific."
+        # Prefer person_id
+        if args.get('person_id'):
+            person_result = supabase.table('person').select('person_id, display_name').eq(
+                'person_id', args['person_id']
+            ).eq('owner_id', user_id).eq('status', 'active').execute()
+            if not person_result.data:
+                return f"Person with ID {args['person_id']} not found."
+        elif args.get('current_name'):
+            person_result = supabase.table('person').select('person_id, display_name').eq(
+                'owner_id', user_id
+            ).ilike('display_name', f"%{args['current_name']}%").eq('status', 'active').execute()
+            if not person_result.data:
+                return f"Person '{args['current_name']}' not found."
+            if len(person_result.data) > 1:
+                people_list = [{'person_id': p['person_id'], 'name': p['display_name']} for p in person_result.data]
+                return json.dumps({'error': 'multiple_matches', 'matches': people_list}, ensure_ascii=False)
+        else:
+            return "Please provide person_id or current_name."
 
         person = person_result.data[0]
         old_name = person['display_name']
 
-        # Update name
         supabase.table('person').update({
             'display_name': args['new_name'],
             'updated_at': datetime.utcnow().isoformat()
         }).eq('person_id', person['person_id']).execute()
 
-        return f"Renamed '{old_name}' to '{args['new_name']}'."
+        return json.dumps({'success': True, 'person_id': person['person_id'], 'old_name': old_name, 'new_name': args['new_name']}, ensure_ascii=False)
 
     elif tool_name == "reject_merge":
         dedup_service = get_dedup_service()
 
-        # Find person A
-        person_a_result = supabase.table('person').select('person_id, display_name').eq(
-            'owner_id', user_id
-        ).ilike('display_name', f"%{args['person_a_name']}%").eq('status', 'active').execute()
+        # Helper to find person
+        def find_person(id_key, name_key):
+            if args.get(id_key):
+                r = supabase.table('person').select('person_id, display_name').eq(
+                    'person_id', args[id_key]).eq('owner_id', user_id).eq('status', 'active').execute()
+                return (r.data[0], None) if r.data else (None, f"Person with ID {args[id_key]} not found.")
+            elif args.get(name_key):
+                r = supabase.table('person').select('person_id, display_name').eq(
+                    'owner_id', user_id).ilike('display_name', f"%{args[name_key]}%").eq('status', 'active').execute()
+                if not r.data:
+                    return None, f"Person '{args[name_key]}' not found."
+                if len(r.data) > 1:
+                    return None, json.dumps({'error': 'multiple_matches', 'matches': [{'person_id': p['person_id'], 'name': p['display_name']} for p in r.data]}, ensure_ascii=False)
+                return r.data[0], None
+            return None, "Missing person_id or name"
 
-        if not person_a_result.data:
-            return f"Person '{args['person_a_name']}' not found."
-        if len(person_a_result.data) > 1:
-            names = [p['display_name'] for p in person_a_result.data]
-            return f"Multiple people match '{args['person_a_name']}': {', '.join(names)}. Please be more specific."
-
-        # Find person B
-        person_b_result = supabase.table('person').select('person_id, display_name').eq(
-            'owner_id', user_id
-        ).ilike('display_name', f"%{args['person_b_name']}%").eq('status', 'active').execute()
-
-        if not person_b_result.data:
-            return f"Person '{args['person_b_name']}' not found."
-        if len(person_b_result.data) > 1:
-            names = [p['display_name'] for p in person_b_result.data]
-            return f"Multiple people match '{args['person_b_name']}': {', '.join(names)}. Please be more specific."
-
-        person_a = person_a_result.data[0]
-        person_b = person_b_result.data[0]
+        person_a, error_a = find_person('person_a_id', 'person_a_name')
+        if error_a:
+            return error_a
+        person_b, error_b = find_person('person_b_id', 'person_b_name')
+        if error_b:
+            return error_b
 
         await dedup_service.reject_duplicate(
             UUID(user_id),
@@ -908,125 +955,30 @@ async def execute_tool(tool_name: str, args: dict, user_id: str) -> str:
             UUID(person_b['person_id'])
         )
 
-        return f"Marked '{person_a['display_name']}' and '{person_b['display_name']}' as different people."
-
-    elif tool_name == "list_people_by_criteria":
-        # Build query based on criteria
-        query = supabase.table('person').select(
-            'person_id, display_name, import_source, import_batch_id'
-        ).eq('owner_id', user_id).eq('status', 'active')
-
-        # Filter by import source
-        if args.get('import_source'):
-            query = query.eq('import_source', args['import_source'])
-
-        limit = args.get('limit', 20)
-        people_result = query.limit(100).execute()  # Get more to filter
-
-        if not people_result.data:
-            return "No people found matching criteria."
-
-        # Further filtering requires checking assertions/identities
-        filtered_people = people_result.data
-
-        # Filter by company pattern
-        if args.get('company_pattern'):
-            pattern = args['company_pattern'].lower()
-            # Get people with works_at assertion matching pattern
-            person_ids = [p['person_id'] for p in filtered_people]
-            company_check = supabase.table('assertion').select(
-                'subject_person_id, object_value'
-            ).in_('subject_person_id', person_ids).eq('predicate', 'works_at').execute()
-
-            matching_ids = set()
-            for a in company_check.data or []:
-                if pattern in (a.get('object_value') or '').lower():
-                    matching_ids.add(a['subject_person_id'])
-
-            filtered_people = [p for p in filtered_people if p['person_id'] in matching_ids]
-
-        # Filter by has_email
-        if 'has_email' in args:
-            person_ids = [p['person_id'] for p in filtered_people]
-            email_check = supabase.table('identity').select(
-                'person_id'
-            ).in_('person_id', person_ids).eq('namespace', 'email').execute()
-
-            email_person_ids = set(i['person_id'] for i in email_check.data or [])
-
-            if args['has_email']:
-                filtered_people = [p for p in filtered_people if p['person_id'] in email_person_ids]
-            else:
-                filtered_people = [p for p in filtered_people if p['person_id'] not in email_person_ids]
-
-        # Prepare result
-        result = []
-        for p in filtered_people[:limit]:
-            result.append({
-                'name': p['display_name'],
-                'import_source': p.get('import_source') or 'manual',
-                'batch_id': p.get('import_batch_id')
-            })
-
-        return json.dumps({
-            'people': result,
-            'total_matching': len(filtered_people),
-            'showing': len(result)
-        }, ensure_ascii=False, indent=2)
+        return json.dumps({'success': True, 'person_a': person_a['display_name'], 'person_b': person_b['display_name']}, ensure_ascii=False)
 
     elif tool_name == "bulk_delete_people":
         confirm = args.get('confirm', False)
 
-        # Build the same query as list_people_by_criteria
-        query = supabase.table('person').select(
-            'person_id, display_name, import_source'
-        ).eq('owner_id', user_id).eq('status', 'active')
+        # Use SQL function for filtering - same as find_people
+        result = supabase.rpc('find_people_filtered', {
+            'p_owner_id': user_id,
+            'p_name_regex': args.get('name_regex'),
+            'p_name_contains': args.get('name_contains'),
+            'p_email_domain': args.get('email_domain'),
+            'p_has_email': args.get('has_email'),
+            'p_import_source': args.get('import_source'),
+            'p_company_contains': args.get('company_contains'),
+            'p_limit': 1000  # Higher limit for bulk ops
+        }).execute()
 
-        if args.get('import_source'):
-            query = query.eq('import_source', args['import_source'])
-
-        people_result = query.limit(500).execute()
-
-        if not people_result.data:
+        if not result.data:
             return "No people found matching criteria."
 
-        filtered_people = people_result.data
-
-        # Filter by company pattern
-        if args.get('company_pattern'):
-            pattern = args['company_pattern'].lower()
-            person_ids = [p['person_id'] for p in filtered_people]
-            company_check = supabase.table('assertion').select(
-                'subject_person_id, object_value'
-            ).in_('subject_person_id', person_ids).eq('predicate', 'works_at').execute()
-
-            matching_ids = set()
-            for a in company_check.data or []:
-                if pattern in (a.get('object_value') or '').lower():
-                    matching_ids.add(a['subject_person_id'])
-
-            filtered_people = [p for p in filtered_people if p['person_id'] in matching_ids]
-
-        # Filter by has_email
-        if 'has_email' in args:
-            person_ids = [p['person_id'] for p in filtered_people]
-            email_check = supabase.table('identity').select(
-                'person_id'
-            ).in_('person_id', person_ids).eq('namespace', 'email').execute()
-
-            email_person_ids = set(i['person_id'] for i in email_check.data or [])
-
-            if args['has_email']:
-                filtered_people = [p for p in filtered_people if p['person_id'] in email_person_ids]
-            else:
-                filtered_people = [p for p in filtered_people if p['person_id'] not in email_person_ids]
-
-        if not filtered_people:
-            return "No people found matching criteria."
+        filtered_people = result.data
 
         if not confirm:
-            # Preview mode
-            sample_names = [p['display_name'] for p in filtered_people[:5]]
+            sample_names = [p['display_name'] for p in filtered_people[:10]]
             return json.dumps({
                 'preview': True,
                 'will_delete': len(filtered_people),

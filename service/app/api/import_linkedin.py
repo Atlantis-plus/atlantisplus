@@ -254,6 +254,33 @@ async def import_linkedin_csv(
         'processing_status': 'extracting'
     }).eq('evidence_id', evidence_id).execute()
 
+    def rollback_batch(batch_id: str, error_msg: str):
+        """Rollback all data created for this batch on error"""
+        try:
+            # Get all people created in this batch
+            people = supabase.table('person').select('person_id').eq(
+                'import_batch_id', batch_id
+            ).execute()
+            person_ids = [p['person_id'] for p in people.data] if people.data else []
+
+            if person_ids:
+                # Delete identities first
+                supabase.table('identity').delete().in_('person_id', person_ids).execute()
+                # Delete assertions
+                supabase.table('assertion').delete().in_('subject_person_id', person_ids).execute()
+                # Delete people
+                supabase.table('person').delete().in_('person_id', person_ids).execute()
+
+            # Mark batch as failed
+            supabase.table('import_batch').update({
+                'status': 'rolled_back'
+            }).eq('batch_id', batch_id).execute()
+
+            # Update evidence status
+            update_status('error', error=error_msg)
+        except Exception as e:
+            print(f"[LINKEDIN IMPORT] Rollback failed: {e}")
+
     imported = 0
     updated = 0
     skipped = 0
@@ -261,163 +288,169 @@ async def import_linkedin_csv(
     details = []
     new_person_ids = []
 
-    for contact in contacts:
-        display_name = f"{contact.first_name} {contact.last_name}".strip()
+    try:
+        for contact in contacts:
+            display_name = f"{contact.first_name} {contact.last_name}".strip()
 
-        if not display_name:
-            skipped += 1
-            continue
-
-        # Check for existing person with same name or email
-        existing_person = None
-
-        # Check by email only (name matching is too unreliable for auto-merge)
-        if contact.email:
-            email_check = supabase.table('identity').select(
-                'person_id'
-            ).eq('namespace', 'email').eq('value', contact.email.lower()).execute()
-
-            if email_check.data:
-                existing_person = email_check.data[0]['person_id']
-
-        # NOTE: We no longer auto-merge by name similarity
-        # Name matching creates too many false positives (e.g., "Serge" matching "Serge Faguet")
-        # Instead, we create new person and log potential duplicates for manual review
-
-        if existing_person:
-            if skip_duplicates:
-                duplicates_found += 1
+            if not display_name:
                 skipped += 1
+                continue
+
+            # Check for existing person with same name or email
+            existing_person = None
+
+            # Check by email only (name matching is too unreliable for auto-merge)
+            if contact.email:
+                email_check = supabase.table('identity').select(
+                    'person_id'
+                ).eq('namespace', 'email').eq('value', contact.email.lower()).execute()
+
+                if email_check.data:
+                    existing_person = email_check.data[0]['person_id']
+
+            # NOTE: We no longer auto-merge by name similarity
+            # Name matching creates too many false positives (e.g., "Serge" matching "Serge Faguet")
+            # Instead, we create new person and log potential duplicates for manual review
+
+            if existing_person:
+                if skip_duplicates:
+                    duplicates_found += 1
+                    skipped += 1
+                    details.append({
+                        'name': display_name,
+                        'status': 'skipped',
+                        'reason': 'duplicate'
+                    })
+                    continue
+                else:
+                    # Update existing person - add new assertions
+                    person_id = existing_person
+                    updated += 1
+                    is_new = False
+            else:
+                # Create new person with batch tracking
+                person_result = supabase.table('person').insert({
+                    'owner_id': user_id,
+                    'display_name': display_name,
+                    'status': 'active',
+                    'import_source': 'linkedin',
+                    'import_batch_id': batch_id
+                }).execute()
+
+                person_id = person_result.data[0]['person_id']
+                new_person_ids.append(person_id)
+                is_new = True
+
+                # Check for similar names and log as potential duplicates for review
+                # (NOT auto-merge - just record for later review via batch dedup)
+                first_name = contact.first_name.strip()
+                if first_name and len(first_name) >= 3:  # Only check if first name is meaningful
+                    similar_check = supabase.table('person').select(
+                        'person_id', 'display_name'
+                    ).eq('owner_id', user_id).neq(
+                        'person_id', person_id
+                    ).ilike(
+                        'display_name', f"{first_name}%"  # Starts with first name
+                    ).eq('status', 'active').limit(5).execute()
+
+                    if similar_check.data:
+                        for similar in similar_check.data:
+                            try:
+                                supabase.table('person_match_candidate').insert({
+                                    'a_person_id': person_id,
+                                    'b_person_id': similar['person_id'],
+                                    'score': 0.5,  # Low score - just name similarity
+                                    'reasons': {
+                                        'type': 'name_similarity_on_import',
+                                        'new_name': display_name,
+                                        'existing_name': similar['display_name'],
+                                        'source': 'linkedin'
+                                    },
+                                    'status': 'pending'
+                                }).execute()
+                            except Exception:
+                                # Ignore duplicate candidate errors
+                                pass
+
+            # Create identities
+            identities_to_create = [
+                {'person_id': person_id, 'namespace': 'linkedin_name', 'value': display_name}
+            ]
+
+            if contact.email:
+                identities_to_create.append({
+                    'person_id': person_id,
+                    'namespace': 'email',
+                    'value': contact.email.lower()
+                })
+
+            for identity in identities_to_create:
+                try:
+                    supabase.table('identity').insert(identity).execute()
+                except Exception:
+                    pass  # Ignore duplicate identities
+
+            # Create assertions
+            assertions_to_create = []
+
+            if contact.company:
+                assertions_to_create.append({
+                    'subject_person_id': person_id,
+                    'predicate': 'works_at',
+                    'object_value': contact.company,
+                    'confidence': 0.8,
+                    'scope': 'personal'
+                })
+
+            if contact.position:
+                assertions_to_create.append({
+                    'subject_person_id': person_id,
+                    'predicate': 'role_is',
+                    'object_value': contact.position,
+                    'confidence': 0.8,
+                    'scope': 'personal'
+                })
+
+            if contact.connected_on:
+                assertions_to_create.append({
+                    'subject_person_id': person_id,
+                    'predicate': 'contact_context',
+                    'object_value': f"Connected on LinkedIn: {contact.connected_on}",
+                    'confidence': 1.0,
+                    'scope': 'personal'
+                })
+
+            # Generate embeddings and insert assertions
+            for assertion in assertions_to_create:
+                try:
+                    text_for_embedding = f"{assertion['predicate']}: {assertion['object_value']}"
+                    embedding = generate_embedding(text_for_embedding)
+                    assertion['embedding'] = embedding
+
+                    supabase.table('assertion').insert(assertion).execute()
+                except Exception as e:
+                    print(f"[IMPORT] Failed to create assertion: {e}")
+
+            if is_new:
+                imported += 1
                 details.append({
                     'name': display_name,
-                    'status': 'skipped',
-                    'reason': 'duplicate'
+                    'status': 'imported',
+                    'company': contact.company,
+                    'position': contact.position
                 })
-                continue
             else:
-                # Update existing person - add new assertions
-                person_id = existing_person
-                updated += 1
-                is_new = False
-        else:
-            # Create new person with batch tracking
-            person_result = supabase.table('person').insert({
-                'owner_id': user_id,
-                'display_name': display_name,
-                'status': 'active',
-                'import_source': 'linkedin',
-                'import_batch_id': batch_id
-            }).execute()
+                details.append({
+                    'name': display_name,
+                    'status': 'updated',
+                    'company': contact.company,
+                    'position': contact.position
+                })
 
-            person_id = person_result.data[0]['person_id']
-            new_person_ids.append(person_id)
-            is_new = True
-
-            # Check for similar names and log as potential duplicates for review
-            # (NOT auto-merge - just record for later review via batch dedup)
-            first_name = contact.first_name.strip()
-            if first_name and len(first_name) >= 3:  # Only check if first name is meaningful
-                similar_check = supabase.table('person').select(
-                    'person_id', 'display_name'
-                ).eq('owner_id', user_id).neq(
-                    'person_id', person_id
-                ).ilike(
-                    'display_name', f"{first_name}%"  # Starts with first name
-                ).eq('status', 'active').limit(5).execute()
-
-                if similar_check.data:
-                    for similar in similar_check.data:
-                        try:
-                            supabase.table('person_match_candidate').insert({
-                                'a_person_id': person_id,
-                                'b_person_id': similar['person_id'],
-                                'score': 0.5,  # Low score - just name similarity
-                                'reasons': {
-                                    'type': 'name_similarity_on_import',
-                                    'new_name': display_name,
-                                    'existing_name': similar['display_name'],
-                                    'source': 'linkedin'
-                                },
-                                'status': 'pending'
-                            }).execute()
-                        except Exception:
-                            # Ignore duplicate candidate errors
-                            pass
-
-        # Create identities
-        identities_to_create = [
-            {'person_id': person_id, 'namespace': 'linkedin_name', 'value': display_name}
-        ]
-
-        if contact.email:
-            identities_to_create.append({
-                'person_id': person_id,
-                'namespace': 'email',
-                'value': contact.email.lower()
-            })
-
-        for identity in identities_to_create:
-            try:
-                supabase.table('identity').insert(identity).execute()
-            except Exception:
-                pass  # Ignore duplicate identities
-
-        # Create assertions
-        assertions_to_create = []
-
-        if contact.company:
-            assertions_to_create.append({
-                'subject_person_id': person_id,
-                'predicate': 'works_at',
-                'object_value': contact.company,
-                'confidence': 0.8,
-                'scope': 'personal'
-            })
-
-        if contact.position:
-            assertions_to_create.append({
-                'subject_person_id': person_id,
-                'predicate': 'role_is',
-                'object_value': contact.position,
-                'confidence': 0.8,
-                'scope': 'personal'
-            })
-
-        if contact.connected_on:
-            assertions_to_create.append({
-                'subject_person_id': person_id,
-                'predicate': 'contact_context',
-                'object_value': f"Connected on LinkedIn: {contact.connected_on}",
-                'confidence': 1.0,
-                'scope': 'personal'
-            })
-
-        # Generate embeddings and insert assertions
-        for assertion in assertions_to_create:
-            try:
-                text_for_embedding = f"{assertion['predicate']}: {assertion['object_value']}"
-                embedding = generate_embedding(text_for_embedding)
-                assertion['embedding'] = embedding
-
-                supabase.table('assertion').insert(assertion).execute()
-            except Exception as e:
-                print(f"[IMPORT] Failed to create assertion: {e}")
-
-        if is_new:
-            imported += 1
-            details.append({
-                'name': display_name,
-                'status': 'imported',
-                'company': contact.company,
-                'position': contact.position
-            })
-        else:
-            details.append({
-                'name': display_name,
-                'status': 'updated',
-                'company': contact.company,
-                'position': contact.position
-            })
+    except Exception as e:
+        # Rollback all changes on any error
+        rollback_batch(batch_id, str(e))
+        raise HTTPException(status_code=500, detail=f"Import failed: {str(e)}")
 
     # Update batch with final counts
     supabase.table('import_batch').update({
