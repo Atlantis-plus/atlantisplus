@@ -26,10 +26,28 @@ interface LinkedInPreview {
   sample: LinkedInContact[];
 }
 
+interface LinkedInAnalytics {
+  by_year: Record<string, number>;
+  by_company: Record<string, number>;
+  with_email: number;
+  without_email: number;
+  total: number;
+}
+
+interface DedupResult {
+  checked?: number;
+  duplicates_found?: number;
+  error?: string;
+}
+
 interface LinkedInResult {
   imported: number;
   skipped: number;
   duplicates_found: number;
+  updated: number;
+  batch_id: string;
+  analytics: LinkedInAnalytics;
+  dedup_result: DedupResult | null;
 }
 
 // Calendar types
@@ -55,11 +73,23 @@ interface CalendarPreview {
   sample_events: CalendarEvent[];
 }
 
+interface CalendarAnalytics {
+  by_frequency: Record<string, number>;
+  date_range: string;
+  top_domains: Record<string, number>;
+  top_attendees: Array<{ email: string; name: string | null; meetings: number }>;
+  total_events: number;
+  total_people: number;
+}
+
 interface CalendarResult {
   imported_people: number;
   imported_meetings: number;
   skipped_duplicates: number;
   updated_existing: number;
+  batch_id: string;
+  analytics: CalendarAnalytics;
+  dedup_result: DedupResult | null;
 }
 
 export const HomePage = ({ onNavigate }: HomePageProps) => {
@@ -322,13 +352,61 @@ export const HomePage = ({ onNavigate }: HomePageProps) => {
                       <span className="stat-value">{linkedInResult.imported}</span>
                       <span className="stat-label">Imported</span>
                     </div>
+                    {linkedInResult.updated > 0 && (
+                      <div className="stat">
+                        <span className="stat-value">{linkedInResult.updated}</span>
+                        <span className="stat-label">Updated</span>
+                      </div>
+                    )}
                     {linkedInResult.duplicates_found > 0 && (
                       <div className="stat warning">
                         <span className="stat-value">{linkedInResult.duplicates_found}</span>
-                        <span className="stat-label">Duplicates Skipped</span>
+                        <span className="stat-label">Skipped</span>
                       </div>
                     )}
                   </div>
+
+                  {/* Analytics */}
+                  {linkedInResult.analytics && (
+                    <div className="analytics-section">
+                      {Object.keys(linkedInResult.analytics.by_year || {}).length > 0 && (
+                        <div className="analytics-block">
+                          <h4>By Year</h4>
+                          <div className="analytics-list">
+                            {Object.entries(linkedInResult.analytics.by_year)
+                              .slice(0, 5)
+                              .map(([year, count]) => (
+                                <span key={year} className="analytics-item">
+                                  {year}: {count}
+                                </span>
+                              ))}
+                          </div>
+                        </div>
+                      )}
+                      {Object.keys(linkedInResult.analytics.by_company || {}).length > 0 && (
+                        <div className="analytics-block">
+                          <h4>Top Companies</h4>
+                          <div className="analytics-list">
+                            {Object.entries(linkedInResult.analytics.by_company)
+                              .slice(0, 5)
+                              .map(([company, count]) => (
+                                <span key={company} className="analytics-item">
+                                  {company} ({count})
+                                </span>
+                              ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Dedup Result */}
+                  {linkedInResult.dedup_result && linkedInResult.dedup_result.duplicates_found !== undefined && linkedInResult.dedup_result.duplicates_found > 0 && (
+                    <div className="dedup-notice">
+                      Found {linkedInResult.dedup_result.duplicates_found} potential duplicates with existing contacts
+                    </div>
+                  )}
+
                   <div className="result-actions">
                     <button
                       onClick={() => onNavigate?.('people')}
@@ -470,9 +548,52 @@ export const HomePage = ({ onNavigate }: HomePageProps) => {
                     </div>
                     <div className="stat">
                       <span className="stat-value">{calendarResult.imported_meetings}</span>
-                      <span className="stat-label">Meetings Saved</span>
+                      <span className="stat-label">Meetings</span>
                     </div>
                   </div>
+
+                  {/* Analytics */}
+                  {calendarResult.analytics && (
+                    <div className="analytics-section">
+                      <p className="date-range">Period: {calendarResult.analytics.date_range}</p>
+
+                      {calendarResult.analytics.by_frequency && (
+                        <div className="analytics-block">
+                          <h4>By Meeting Frequency</h4>
+                          <div className="analytics-list">
+                            {Object.entries(calendarResult.analytics.by_frequency).map(([freq, count]) => (
+                              <span key={freq} className="analytics-item">
+                                {freq} meetings: {count} people
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {Object.keys(calendarResult.analytics.top_domains || {}).length > 0 && (
+                        <div className="analytics-block">
+                          <h4>Top Domains</h4>
+                          <div className="analytics-list">
+                            {Object.entries(calendarResult.analytics.top_domains)
+                              .slice(0, 5)
+                              .map(([domain, count]) => (
+                                <span key={domain} className="analytics-item">
+                                  {domain} ({count})
+                                </span>
+                              ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Dedup Result */}
+                  {calendarResult.dedup_result && calendarResult.dedup_result.duplicates_found !== undefined && calendarResult.dedup_result.duplicates_found > 0 && (
+                    <div className="dedup-notice">
+                      Found {calendarResult.dedup_result.duplicates_found} potential duplicates with existing contacts
+                    </div>
+                  )}
+
                   <div className="result-actions">
                     <button
                       onClick={() => onNavigate?.('people')}

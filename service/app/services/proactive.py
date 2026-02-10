@@ -13,11 +13,8 @@ from datetime import datetime, timezone
 
 from app.supabase_client import get_supabase_admin
 from app.services.dedup import get_dedup_service
-from app.telegram_bot.telegram_api import (
-    send_message,
-    send_message_with_buttons,
-    get_telegram_id_for_user
-)
+
+# Note: telegram_bot imports are done lazily inside methods to avoid circular imports
 
 
 class ProactiveNotificationService:
@@ -38,6 +35,11 @@ class ProactiveNotificationService:
 
         Returns: Number of notifications sent
         """
+        from app.telegram_bot.telegram_api import (
+            get_telegram_id_for_user,
+            send_message_with_buttons
+        )
+
         telegram_id = await get_telegram_id_for_user(user_id)
         if not telegram_id:
             return 0
@@ -118,6 +120,87 @@ class ProactiveNotificationService:
         # For now, handlers.py sends the summary directly
         return True
 
+    async def send_import_report(
+        self,
+        user_id: str,
+        import_type: str,
+        batch_id: str,
+        new_people: int,
+        updated_people: int,
+        analytics: dict,
+        dedup_result: Optional[dict] = None
+    ) -> bool:
+        """
+        Send import completion report to Telegram.
+
+        Args:
+            user_id: Supabase user ID
+            import_type: 'linkedin' or 'calendar'
+            batch_id: Import batch ID for reference
+            new_people: Number of new contacts created
+            updated_people: Number of existing contacts updated
+            analytics: Analytics dict with import stats
+            dedup_result: Optional dedup results
+
+        Returns:
+            True if sent successfully
+        """
+        from app.telegram_bot.telegram_api import (
+            get_telegram_id_for_user,
+            send_message
+        )
+
+        telegram_id = await get_telegram_id_for_user(user_id)
+        if not telegram_id:
+            print(f"[PROACTIVE] No telegram_id found for user {user_id}")
+            return False
+
+        # Build message
+        source_name = "LinkedIn" if import_type == "linkedin" else "Google Calendar"
+        message_lines = [
+            f"**Import Complete** ({source_name})",
+            "",
+            f"New contacts: {new_people}",
+            f"Updated: {updated_people}",
+        ]
+
+        # Add analytics based on import type
+        if import_type == "linkedin" and analytics:
+            by_year = analytics.get("by_year", {})
+            if by_year:
+                years_str = ", ".join([f"{y}: {c}" for y, c in list(by_year.items())[:3]])
+                message_lines.append(f"By year: {years_str}")
+
+            by_company = analytics.get("by_company", {})
+            if by_company:
+                companies = list(by_company.keys())[:3]
+                message_lines.append(f"Top companies: {', '.join(companies)}")
+
+        elif import_type == "calendar" and analytics:
+            by_freq = analytics.get("by_frequency", {})
+            if by_freq:
+                freq_str = ", ".join([f"{k}: {v}" for k, v in by_freq.items()])
+                message_lines.append(f"By frequency: {freq_str}")
+
+            date_range = analytics.get("date_range")
+            if date_range:
+                message_lines.append(f"Period: {date_range}")
+
+        # Add dedup info
+        if dedup_result and dedup_result.get("duplicates_found", 0) > 0:
+            message_lines.append("")
+            message_lines.append(f"Potential duplicates: {dedup_result['duplicates_found']}")
+            message_lines.append("Review them in the app")
+
+        message = "\n".join(message_lines)
+
+        try:
+            await send_message(telegram_id, message, parse_mode="Markdown")
+            return True
+        except Exception as e:
+            print(f"[PROACTIVE] Failed to send import report: {e}")
+            return False
+
     async def send_proactive_question(
         self,
         user_id: str,
@@ -133,6 +216,11 @@ class ProactiveNotificationService:
         Returns:
             Question dict if sent, None otherwise
         """
+        from app.telegram_bot.telegram_api import (
+            get_telegram_id_for_user,
+            send_message
+        )
+
         telegram_id = await get_telegram_id_for_user(user_id)
         if not telegram_id:
             return None

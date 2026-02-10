@@ -216,6 +216,15 @@ class ApiClient {
     imported: number;
     skipped: number;
     duplicates_found: number;
+    updated: number;
+    batch_id: string;
+    analytics: {
+      by_year: Record<string, number>;
+      by_company: Record<string, number>;
+      with_email: number;
+      without_email: number;
+      total: number;
+    };
     details: Array<{
       name: string;
       status: string;
@@ -223,6 +232,11 @@ class ApiClient {
       company?: string;
       position?: string;
     }>;
+    dedup_result: {
+      checked?: number;
+      duplicates_found?: number;
+      error?: string;
+    } | null;
   }> {
     const formData = new FormData();
     formData.append('file', file);
@@ -303,6 +317,20 @@ class ApiClient {
     imported_meetings: number;
     skipped_duplicates: number;
     updated_existing: number;
+    batch_id: string;
+    analytics: {
+      by_frequency: Record<string, number>;
+      date_range: string;
+      top_domains: Record<string, number>;
+      top_attendees: Array<{ email: string; name: string | null; meetings: number }>;
+      total_events: number;
+      total_people: number;
+    };
+    dedup_result: {
+      checked?: number;
+      duplicates_found?: number;
+      error?: string;
+    } | null;
   }> {
     const formData = new FormData();
     formData.append('file', file);

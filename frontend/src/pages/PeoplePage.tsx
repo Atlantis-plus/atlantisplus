@@ -8,6 +8,16 @@ interface Person {
   summary: string | null;
   created_at: string;
   owner_id: string;
+  import_source?: string;
+  identity_count?: number;
+  has_email?: boolean;
+}
+
+interface Identity {
+  identity_id: string;
+  namespace: string;
+  value: string;
+  verified: boolean;
 }
 
 type TabType = 'own' | 'shared';
@@ -24,6 +34,7 @@ export const PeoplePage = () => {
   const [people, setPeople] = useState<Person[]>([]);
   const [selectedPerson, setSelectedPerson] = useState<Person | null>(null);
   const [assertions, setAssertions] = useState<Assertion[]>([]);
+  const [identities, setIdentities] = useState<Identity[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const [activeTab, setActiveTab] = useState<TabType>('own');
@@ -64,16 +75,58 @@ export const PeoplePage = () => {
     }
   };
 
+  const fetchIdentities = async (personId: string) => {
+    const { data } = await supabase
+      .from('identity')
+      .select('identity_id, namespace, value, verified')
+      .eq('person_id', personId);
+
+    if (data) {
+      setIdentities(data);
+    }
+  };
+
   const handlePersonClick = async (person: Person) => {
     setSelectedPerson(person);
-    await fetchAssertions(person.person_id);
+    setIdentities([]); // Reset identities
+    setAssertions([]); // Reset assertions
+    await Promise.all([
+      fetchAssertions(person.person_id),
+      fetchIdentities(person.person_id)
+    ]);
   };
 
   const handleBack = () => {
     setSelectedPerson(null);
     setAssertions([]);
+    setIdentities([]);
     setShowDeleteConfirm(false);
   };
+
+  // Helper to format namespace for display
+  const formatNamespace = (namespace: string): string => {
+    const labels: Record<string, string> = {
+      'email': '📧 Email',
+      'linkedin_name': '💼 LinkedIn',
+      'linkedin_url': '🔗 LinkedIn URL',
+      'calendar_name': '📅 Calendar',
+      'telegram_username': '✈️ Telegram',
+      'freeform_name': '📝 Name variant',
+      'phone': '📱 Phone',
+      'email_hash': '📧 Email',
+    };
+    return labels[namespace] || namespace;
+  };
+
+  // Get contact identities (email, phone, social)
+  const contactIdentities = identities.filter(i =>
+    ['email', 'linkedin_url', 'telegram_username', 'phone'].includes(i.namespace)
+  );
+
+  // Get name identities
+  const nameIdentities = identities.filter(i =>
+    ['linkedin_name', 'calendar_name', 'freeform_name'].includes(i.namespace)
+  );
 
   const handleDelete = async () => {
     if (!selectedPerson) return;
@@ -174,6 +227,55 @@ export const PeoplePage = () => {
           )}
           {selectedPerson.summary && (
             <p className="person-summary">{selectedPerson.summary}</p>
+          )}
+
+          {/* Contact Info Section - always show for debugging */}
+          <div className="contacts-section">
+            <h3>Contacts ({contactIdentities.length} / {identities.length} total)</h3>
+            {contactIdentities.length > 0 ? (
+              <ul className="contacts-list">
+                {contactIdentities.map((identity) => (
+                  <li key={identity.identity_id} className="contact-item">
+                    <span className="contact-type">{formatNamespace(identity.namespace)}</span>
+                    <span className="contact-value">
+                      {identity.namespace === 'email' ? (
+                        <a href={`mailto:${identity.value}`}>{identity.value}</a>
+                      ) : identity.namespace === 'linkedin_url' ? (
+                        <a href={identity.value} target="_blank" rel="noopener noreferrer">
+                          {identity.value.replace('https://www.linkedin.com/in/', '')}
+                        </a>
+                      ) : identity.namespace === 'telegram_username' ? (
+                        <a href={`https://t.me/${identity.value.replace('@', '')}`} target="_blank" rel="noopener noreferrer">
+                          {identity.value}
+                        </a>
+                      ) : (
+                        identity.value
+                      )}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="empty-state">No contact info</p>
+            )}
+          </div>
+
+          {/* Name Variants / Sources */}
+          {nameIdentities.length > 1 && (
+            <div className="sources-section">
+              <h3>Also known as ({nameIdentities.length} sources)</h3>
+              <div className="name-variants">
+                {nameIdentities.map((identity) => (
+                  <span key={identity.identity_id} className="name-variant-tag">
+                    {identity.value}
+                    <span className="source-hint">
+                      {identity.namespace === 'linkedin_name' ? ' (LinkedIn)' :
+                       identity.namespace === 'calendar_name' ? ' (Calendar)' : ''}
+                    </span>
+                  </span>
+                ))}
+              </div>
+            </div>
           )}
 
           <div className="assertions-section">

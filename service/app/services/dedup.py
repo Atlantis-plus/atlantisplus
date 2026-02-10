@@ -315,6 +315,82 @@ class DeduplicationService:
 
         return created_questions
 
+    async def run_batch_dedup(
+        self,
+        owner_id: UUID,
+        batch_id: str
+    ) -> dict:
+        """
+        Run dedup specifically for newly imported batch.
+
+        Compares each person from the batch against existing people
+        (excluding others from the same batch) and creates match candidates.
+
+        Returns dict with checked count and duplicates found.
+        """
+        # Get all people from this batch
+        batch_people = self.supabase.from_("person").select(
+            "person_id, display_name"
+        ).eq("import_batch_id", batch_id).eq("status", "active").execute()
+
+        if not batch_people.data:
+            return {"checked": 0, "duplicates_found": 0}
+
+        batch_person_ids = {p["person_id"] for p in batch_people.data}
+        duplicates_found = 0
+        seen_pairs = set()
+
+        for person in batch_people.data:
+            person_id = UUID(person["person_id"])
+
+            # Find duplicates for this person
+            candidates = await self.find_duplicates_for_person(
+                owner_id, person_id,
+                name_threshold=0.5,
+                embedding_threshold=0.8
+            )
+
+            for candidate in candidates:
+                # Skip if candidate is also from this batch
+                if str(candidate.person_id) in batch_person_ids:
+                    continue
+
+                # Create sorted pair to avoid duplicates
+                pair = tuple(sorted([str(person_id), str(candidate.person_id)]))
+                if pair in seen_pairs:
+                    continue
+                seen_pairs.add(pair)
+
+                # Check if this pair already has a candidate record
+                existing = self.supabase.from_("person_match_candidate").select(
+                    "id"
+                ).eq("a_person_id", pair[0]).eq("b_person_id", pair[1]).execute()
+
+                if not existing.data:
+                    # Create match candidate
+                    try:
+                        self.supabase.from_("person_match_candidate").insert({
+                            "a_person_id": pair[0],
+                            "b_person_id": pair[1],
+                            "score": candidate.match_score,
+                            "reasons": {
+                                "match_type": candidate.match_type,
+                                "batch_id": batch_id,
+                                "new_person_name": person["display_name"],
+                                "existing_person_name": candidate.display_name,
+                                **candidate.match_details
+                            },
+                            "status": "pending"
+                        }).execute()
+                        duplicates_found += 1
+                    except Exception as e:
+                        print(f"[DEDUP] Failed to create match candidate: {e}")
+
+        return {
+            "checked": len(batch_people.data),
+            "duplicates_found": duplicates_found
+        }
+
 
 # Singleton instance
 _dedup_service: Optional[DeduplicationService] = None

@@ -7,6 +7,7 @@ Imports meetings and attendees from Google Calendar ICS export.
 from datetime import datetime
 from typing import Optional
 from collections import defaultdict
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from pydantic import BaseModel
@@ -15,6 +16,9 @@ from icalendar import Calendar
 from app.supabase_client import get_supabase_admin
 from app.middleware.auth import verify_supabase_token, get_user_id
 from app.services.embedding import generate_embedding
+from app.services.dedup import get_dedup_service
+from app.services.proactive import get_proactive_service
+from app.services.import_analytics import calculate_calendar_analytics
 
 router = APIRouter(prefix="/import", tags=["import"])
 
@@ -46,6 +50,9 @@ class CalendarImportResult(BaseModel):
     imported_meetings: int
     skipped_duplicates: int
     updated_existing: int
+    batch_id: str
+    analytics: dict
+    dedup_result: Optional[dict] = None
 
 
 def parse_ics_file(content: bytes, owner_email: Optional[str] = None) -> tuple[list[dict], dict[str, dict]]:
@@ -235,6 +242,7 @@ async def import_calendar(
     For each unique attendee:
     - Creates or finds person by email
     - Creates assertions for meeting context
+    - Tracks import in batch table for analytics and rollback
     """
     user_id = get_user_id(token_payload)
     supabase = get_supabase_admin()
@@ -248,10 +256,23 @@ async def import_calendar(
     if not events:
         raise HTTPException(status_code=400, detail="No events with attendees found")
 
+    # Calculate analytics before import
+    analytics = calculate_calendar_analytics(events, attendees)
+
+    # Create import batch for tracking
+    batch_result = supabase.table('import_batch').insert({
+        'owner_id': user_id,
+        'import_type': 'calendar',
+        'total_contacts': len(attendees),
+        'analytics': analytics
+    }).execute()
+    batch_id = batch_result.data[0]['batch_id']
+
     imported_people = 0
     skipped_duplicates = 0
     updated_existing = 0
     imported_meetings = 0
+    new_person_ids = []
 
     # Process each unique attendee
     for email, info in attendees.items():
@@ -266,6 +287,7 @@ async def import_calendar(
             # Person exists - add calendar context if new
             person_id = existing.data[0]['person_id']
             updated_existing += 1
+            is_new = False
         else:
             # Check by name similarity (for people without email in LinkedIn import)
             name_check = supabase.table('person').select(
@@ -286,15 +308,20 @@ async def import_calendar(
                 except:
                     pass
                 updated_existing += 1
+                is_new = False
             else:
-                # Create new person
+                # Create new person with batch tracking
                 person_result = supabase.table('person').insert({
                     'owner_id': user_id,
                     'display_name': name,
-                    'status': 'active'
+                    'status': 'active',
+                    'import_source': 'calendar',
+                    'import_batch_id': batch_id
                 }).execute()
 
                 person_id = person_result.data[0]['person_id']
+                new_person_ids.append(person_id)
+                is_new = True
 
                 # Create email identity
                 supabase.table('identity').insert({
@@ -352,9 +379,47 @@ async def import_calendar(
                 except Exception as e:
                     print(f"[CALENDAR IMPORT] Failed to create assertion: {e}")
 
+    # Update batch with final counts
+    supabase.table('import_batch').update({
+        'new_people': imported_people,
+        'updated_people': updated_existing,
+        'duplicates_found': skipped_duplicates
+    }).eq('batch_id', batch_id).execute()
+
+    # Run batch dedup to find potential duplicates with existing contacts
+    dedup_result = None
+    if imported_people > 0:
+        try:
+            dedup_service = get_dedup_service()
+            dedup_result = await dedup_service.run_batch_dedup(
+                owner_id=UUID(user_id),
+                batch_id=batch_id
+            )
+        except Exception as e:
+            print(f"[CALENDAR IMPORT] Dedup failed: {e}")
+            dedup_result = {"error": str(e)}
+
+    # Send Telegram notification
+    try:
+        proactive_service = get_proactive_service()
+        await proactive_service.send_import_report(
+            user_id=user_id,
+            import_type='calendar',
+            batch_id=batch_id,
+            new_people=imported_people,
+            updated_people=updated_existing,
+            analytics=analytics,
+            dedup_result=dedup_result
+        )
+    except Exception as e:
+        print(f"[CALENDAR IMPORT] Failed to send Telegram notification: {e}")
+
     return CalendarImportResult(
         imported_people=imported_people,
         imported_meetings=imported_meetings,
         skipped_duplicates=skipped_duplicates,
-        updated_existing=updated_existing
+        updated_existing=updated_existing,
+        batch_id=batch_id,
+        analytics=analytics,
+        dedup_result=dedup_result
     )

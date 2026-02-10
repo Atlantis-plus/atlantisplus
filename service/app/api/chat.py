@@ -220,6 +220,100 @@ TOOLS = [
             }
         }
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "list_people_by_criteria",
+            "description": "Find people matching specific criteria like import source, company, has email, or meeting frequency. Useful for filtering imported contacts.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "import_source": {
+                        "type": "string",
+                        "description": "Filter by source: 'linkedin', 'calendar', or 'voice_note'",
+                        "enum": ["linkedin", "calendar", "voice_note"]
+                    },
+                    "company_pattern": {
+                        "type": "string",
+                        "description": "Substring to match in company name (case insensitive)"
+                    },
+                    "has_email": {
+                        "type": "boolean",
+                        "description": "If true, only people with email; if false, only without email"
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Maximum number of results",
+                        "default": 20
+                    }
+                }
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "bulk_delete_people",
+            "description": "Delete multiple people matching criteria. REQUIRES explicit user confirmation. Returns count of deleted.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "import_source": {
+                        "type": "string",
+                        "description": "Delete only from this source: 'linkedin', 'calendar'",
+                        "enum": ["linkedin", "calendar"]
+                    },
+                    "company_pattern": {
+                        "type": "string",
+                        "description": "Delete only people from companies matching this pattern"
+                    },
+                    "has_email": {
+                        "type": "boolean",
+                        "description": "If false, delete only people without email"
+                    },
+                    "confirm": {
+                        "type": "boolean",
+                        "description": "MUST be true to actually delete. If false, returns preview only."
+                    }
+                },
+                "required": ["confirm"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_import_stats",
+            "description": "Show statistics about imported contacts: counts by source, by year, top companies, etc.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "import_source": {
+                        "type": "string",
+                        "description": "Optional: filter by source 'linkedin' or 'calendar'",
+                        "enum": ["linkedin", "calendar"]
+                    }
+                }
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "rollback_import",
+            "description": "Undo an entire import batch. Soft-deletes all people from that batch.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "batch_id": {
+                        "type": "string",
+                        "description": "The batch_id to rollback (from import result or get_import_stats)"
+                    }
+                },
+                "required": ["batch_id"]
+            }
+        }
+    },
 ]
 
 SYSTEM_PROMPT = """You are a personal network assistant helping the user manage and query their professional network.
@@ -247,6 +341,22 @@ When user says things like:
 - "X и Y это разные люди" / "X and Y are different" → use reject_merge
 - "удали X" / "delete X" → use delete_person
 - "переименуй X в Y" / "rename X to Y" → use edit_person
+
+## IMPORT MANAGEMENT COMMANDS
+When user says things like:
+- "покажи всех из LinkedIn" / "show all from LinkedIn" → use list_people_by_criteria(import_source="linkedin")
+- "покажи всех из Google" / "who is from Google" → use list_people_by_criteria(company_pattern="Google")
+- "кто без email" / "who has no email" → use list_people_by_criteria(has_email=false)
+- "удали всех без email" / "delete all without email" → use bulk_delete_people(has_email=false, confirm=true)
+- "удали всех рекрутеров" → use list_people_by_criteria first, then bulk_delete_people
+- "сколько людей из календаря?" / "how many from calendar" → use get_import_stats(import_source="calendar")
+- "статистика импорта" / "import statistics" → use get_import_stats()
+- "откати последний импорт" / "undo last import" → first get_import_stats, then rollback_import
+
+IMPORTANT for bulk operations:
+- ALWAYS preview first with confirm=false before actual delete
+- Ask user to confirm before setting confirm=true
+- Show exactly what will be deleted
 
 Guidelines:
 - Be concise but helpful
@@ -799,6 +909,224 @@ async def execute_tool(tool_name: str, args: dict, user_id: str) -> str:
         )
 
         return f"Marked '{person_a['display_name']}' and '{person_b['display_name']}' as different people."
+
+    elif tool_name == "list_people_by_criteria":
+        # Build query based on criteria
+        query = supabase.table('person').select(
+            'person_id, display_name, import_source, import_batch_id'
+        ).eq('owner_id', user_id).eq('status', 'active')
+
+        # Filter by import source
+        if args.get('import_source'):
+            query = query.eq('import_source', args['import_source'])
+
+        limit = args.get('limit', 20)
+        people_result = query.limit(100).execute()  # Get more to filter
+
+        if not people_result.data:
+            return "No people found matching criteria."
+
+        # Further filtering requires checking assertions/identities
+        filtered_people = people_result.data
+
+        # Filter by company pattern
+        if args.get('company_pattern'):
+            pattern = args['company_pattern'].lower()
+            # Get people with works_at assertion matching pattern
+            person_ids = [p['person_id'] for p in filtered_people]
+            company_check = supabase.table('assertion').select(
+                'subject_person_id, object_value'
+            ).in_('subject_person_id', person_ids).eq('predicate', 'works_at').execute()
+
+            matching_ids = set()
+            for a in company_check.data or []:
+                if pattern in (a.get('object_value') or '').lower():
+                    matching_ids.add(a['subject_person_id'])
+
+            filtered_people = [p for p in filtered_people if p['person_id'] in matching_ids]
+
+        # Filter by has_email
+        if 'has_email' in args:
+            person_ids = [p['person_id'] for p in filtered_people]
+            email_check = supabase.table('identity').select(
+                'person_id'
+            ).in_('person_id', person_ids).eq('namespace', 'email').execute()
+
+            email_person_ids = set(i['person_id'] for i in email_check.data or [])
+
+            if args['has_email']:
+                filtered_people = [p for p in filtered_people if p['person_id'] in email_person_ids]
+            else:
+                filtered_people = [p for p in filtered_people if p['person_id'] not in email_person_ids]
+
+        # Prepare result
+        result = []
+        for p in filtered_people[:limit]:
+            result.append({
+                'name': p['display_name'],
+                'import_source': p.get('import_source') or 'manual',
+                'batch_id': p.get('import_batch_id')
+            })
+
+        return json.dumps({
+            'people': result,
+            'total_matching': len(filtered_people),
+            'showing': len(result)
+        }, ensure_ascii=False, indent=2)
+
+    elif tool_name == "bulk_delete_people":
+        confirm = args.get('confirm', False)
+
+        # Build the same query as list_people_by_criteria
+        query = supabase.table('person').select(
+            'person_id, display_name, import_source'
+        ).eq('owner_id', user_id).eq('status', 'active')
+
+        if args.get('import_source'):
+            query = query.eq('import_source', args['import_source'])
+
+        people_result = query.limit(500).execute()
+
+        if not people_result.data:
+            return "No people found matching criteria."
+
+        filtered_people = people_result.data
+
+        # Filter by company pattern
+        if args.get('company_pattern'):
+            pattern = args['company_pattern'].lower()
+            person_ids = [p['person_id'] for p in filtered_people]
+            company_check = supabase.table('assertion').select(
+                'subject_person_id, object_value'
+            ).in_('subject_person_id', person_ids).eq('predicate', 'works_at').execute()
+
+            matching_ids = set()
+            for a in company_check.data or []:
+                if pattern in (a.get('object_value') or '').lower():
+                    matching_ids.add(a['subject_person_id'])
+
+            filtered_people = [p for p in filtered_people if p['person_id'] in matching_ids]
+
+        # Filter by has_email
+        if 'has_email' in args:
+            person_ids = [p['person_id'] for p in filtered_people]
+            email_check = supabase.table('identity').select(
+                'person_id'
+            ).in_('person_id', person_ids).eq('namespace', 'email').execute()
+
+            email_person_ids = set(i['person_id'] for i in email_check.data or [])
+
+            if args['has_email']:
+                filtered_people = [p for p in filtered_people if p['person_id'] in email_person_ids]
+            else:
+                filtered_people = [p for p in filtered_people if p['person_id'] not in email_person_ids]
+
+        if not filtered_people:
+            return "No people found matching criteria."
+
+        if not confirm:
+            # Preview mode
+            sample_names = [p['display_name'] for p in filtered_people[:5]]
+            return json.dumps({
+                'preview': True,
+                'will_delete': len(filtered_people),
+                'sample': sample_names,
+                'message': f"This will delete {len(filtered_people)} people. Set confirm=true to proceed."
+            }, ensure_ascii=False)
+
+        # Actually delete
+        person_ids_to_delete = [p['person_id'] for p in filtered_people]
+        supabase.table('person').update({
+            'status': 'deleted',
+            'updated_at': datetime.utcnow().isoformat()
+        }).in_('person_id', person_ids_to_delete).execute()
+
+        return json.dumps({
+            'deleted': len(filtered_people),
+            'message': f"Deleted {len(filtered_people)} people."
+        }, ensure_ascii=False)
+
+    elif tool_name == "get_import_stats":
+        # Get stats by import source
+        query = supabase.table('person').select(
+            'import_source, import_batch_id'
+        ).eq('owner_id', user_id).eq('status', 'active')
+
+        if args.get('import_source'):
+            query = query.eq('import_source', args['import_source'])
+
+        people = query.execute()
+
+        if not people.data:
+            return "No imported contacts found."
+
+        # Count by source
+        by_source = {}
+        batch_ids = set()
+        for p in people.data:
+            source = p.get('import_source') or 'manual'
+            by_source[source] = by_source.get(source, 0) + 1
+            if p.get('import_batch_id'):
+                batch_ids.add(p['import_batch_id'])
+
+        # Get batch details
+        batches = []
+        if batch_ids:
+            batch_result = supabase.table('import_batch').select(
+                'batch_id, import_type, status, total_contacts, new_people, analytics, created_at'
+            ).in_('batch_id', list(batch_ids)).order('created_at', desc=True).limit(5).execute()
+
+            for b in batch_result.data or []:
+                batches.append({
+                    'batch_id': b['batch_id'],
+                    'type': b['import_type'],
+                    'status': b['status'],
+                    'imported': b.get('new_people', 0),
+                    'date': b['created_at'][:10] if b.get('created_at') else 'unknown',
+                    'analytics': b.get('analytics')
+                })
+
+        return json.dumps({
+            'total_people': len(people.data),
+            'by_source': by_source,
+            'recent_batches': batches
+        }, ensure_ascii=False, indent=2)
+
+    elif tool_name == "rollback_import":
+        batch_id = args['batch_id']
+
+        # Verify batch exists and belongs to user
+        batch_check = supabase.table('import_batch').select(
+            'batch_id, status, import_type, new_people'
+        ).eq('batch_id', batch_id).eq('owner_id', user_id).single().execute()
+
+        if not batch_check.data:
+            return f"Batch {batch_id} not found or doesn't belong to you."
+
+        if batch_check.data['status'] == 'rolled_back':
+            return f"Batch {batch_id} was already rolled back."
+
+        # Soft delete all people from this batch
+        delete_result = supabase.table('person').update({
+            'status': 'deleted',
+            'updated_at': datetime.utcnow().isoformat()
+        }).eq('import_batch_id', batch_id).eq('status', 'active').execute()
+
+        deleted_count = len(delete_result.data) if delete_result.data else 0
+
+        # Mark batch as rolled back
+        supabase.table('import_batch').update({
+            'status': 'rolled_back',
+            'rolled_back_at': datetime.utcnow().isoformat()
+        }).eq('batch_id', batch_id).execute()
+
+        return json.dumps({
+            'success': True,
+            'batch_id': batch_id,
+            'import_type': batch_check.data['import_type'],
+            'deleted_count': deleted_count,
+            'message': f"Rolled back {batch_check.data['import_type']} import. Deleted {deleted_count} people."
+        }, ensure_ascii=False)
 
     return f"Unknown tool: {tool_name}"
 

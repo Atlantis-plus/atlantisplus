@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """
 Authentication bridge between Telegram and Supabase.
 

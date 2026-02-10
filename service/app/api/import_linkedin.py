@@ -18,6 +18,8 @@ from app.supabase_client import get_supabase_admin
 from app.middleware.auth import verify_supabase_token, get_user_id
 from app.services.embedding import generate_embedding
 from app.services.dedup import get_dedup_service
+from app.services.proactive import get_proactive_service
+from app.services.import_analytics import calculate_linkedin_analytics
 
 router = APIRouter(prefix="/import", tags=["import"])
 
@@ -42,7 +44,11 @@ class ImportResult(BaseModel):
     imported: int
     skipped: int
     duplicates_found: int
+    updated: int
+    batch_id: str
+    analytics: dict
     details: list[dict]
+    dedup_result: Optional[dict] = None
 
 
 def parse_linkedin_csv(content: str) -> list[LinkedInContact]:
@@ -145,10 +151,10 @@ async def import_linkedin_csv(
     Import LinkedIn connections from CSV.
 
     Creates person records with assertions for company, position, and connection date.
+    Tracks import in batch table for analytics and rollback.
     """
     user_id = get_user_id(token_payload)
     supabase = get_supabase_admin()
-    dedup_service = get_dedup_service()
 
     # Read and parse file
     try:
@@ -164,10 +170,32 @@ async def import_linkedin_csv(
     if not contacts:
         raise HTTPException(status_code=400, detail="No contacts found in CSV")
 
+    # Calculate analytics before import
+    contacts_for_analytics = [
+        {
+            'connected_on': c.connected_on,
+            'company': c.company,
+            'email': c.email
+        }
+        for c in contacts
+    ]
+    analytics = calculate_linkedin_analytics(contacts_for_analytics)
+
+    # Create import batch for tracking
+    batch_result = supabase.table('import_batch').insert({
+        'owner_id': user_id,
+        'import_type': 'linkedin',
+        'total_contacts': len(contacts),
+        'analytics': analytics
+    }).execute()
+    batch_id = batch_result.data[0]['batch_id']
+
     imported = 0
+    updated = 0
     skipped = 0
     duplicates_found = 0
     details = []
+    new_person_ids = []
 
     for contact in contacts:
         display_name = f"{contact.first_name} {contact.last_name}".strip()
@@ -210,17 +238,23 @@ async def import_linkedin_csv(
                 })
                 continue
             else:
-                # Update existing person
+                # Update existing person - add new assertions
                 person_id = existing_person
+                updated += 1
+                is_new = False
         else:
-            # Create new person
+            # Create new person with batch tracking
             person_result = supabase.table('person').insert({
                 'owner_id': user_id,
                 'display_name': display_name,
-                'status': 'active'
+                'status': 'active',
+                'import_source': 'linkedin',
+                'import_batch_id': batch_id
             }).execute()
 
             person_id = person_result.data[0]['person_id']
+            new_person_ids.append(person_id)
+            is_new = True
 
         # Create identities
         identities_to_create = [
@@ -273,7 +307,6 @@ async def import_linkedin_csv(
         # Generate embeddings and insert assertions
         for assertion in assertions_to_create:
             try:
-                # Generate embedding for semantic search
                 text_for_embedding = f"{assertion['predicate']}: {assertion['object_value']}"
                 embedding = generate_embedding(text_for_embedding)
                 assertion['embedding'] = embedding
@@ -282,19 +315,66 @@ async def import_linkedin_csv(
             except Exception as e:
                 print(f"[IMPORT] Failed to create assertion: {e}")
 
-        imported += 1
-        details.append({
-            'name': display_name,
-            'status': 'imported',
-            'company': contact.company,
-            'position': contact.position
-        })
+        if is_new:
+            imported += 1
+            details.append({
+                'name': display_name,
+                'status': 'imported',
+                'company': contact.company,
+                'position': contact.position
+            })
+        else:
+            details.append({
+                'name': display_name,
+                'status': 'updated',
+                'company': contact.company,
+                'position': contact.position
+            })
+
+    # Update batch with final counts
+    supabase.table('import_batch').update({
+        'new_people': imported,
+        'updated_people': updated,
+        'duplicates_found': duplicates_found
+    }).eq('batch_id', batch_id).execute()
+
+    # Run batch dedup to find potential duplicates with existing contacts
+    dedup_result = None
+    if imported > 0:
+        try:
+            dedup_service = get_dedup_service()
+            dedup_result = await dedup_service.run_batch_dedup(
+                owner_id=UUID(user_id),
+                batch_id=batch_id
+            )
+        except Exception as e:
+            print(f"[LINKEDIN IMPORT] Dedup failed: {e}")
+            dedup_result = {"error": str(e)}
+
+    # Send Telegram notification
+    try:
+        proactive_service = get_proactive_service()
+        await proactive_service.send_import_report(
+            user_id=user_id,
+            import_type='linkedin',
+            batch_id=batch_id,
+            new_people=imported,
+            updated_people=updated,
+            analytics=analytics,
+            dedup_result=dedup_result
+        )
+    except Exception as e:
+        print(f"[LINKEDIN IMPORT] Failed to send Telegram notification: {e}")
 
     return ImportResult(
         imported=imported,
         skipped=skipped,
         duplicates_found=duplicates_found,
-        details=details[:20]  # Limit details to first 20
+        updated=updated,
+        batch_id=batch_id,
+        analytics=analytics,
+        details=details[:20],
+        dedup_result=dedup_result
     )
 
 
@@ -309,3 +389,103 @@ Jane,Smith,jane.smith@example.com,Meta,Product Manager,03 Mar 2019
 Alex,Johnson,,Amazon,Senior Developer,22 Jul 2021
 """
     return {"sample": sample}
+
+
+# ============================================
+# Batch Management Endpoints
+# ============================================
+
+class BatchInfo(BaseModel):
+    batch_id: str
+    import_type: str
+    status: str
+    total_contacts: int
+    new_people: int
+    updated_people: int
+    duplicates_found: int
+    analytics: dict
+    created_at: str
+
+
+class BatchListResponse(BaseModel):
+    batches: list[BatchInfo]
+
+
+@router.get("/batches", response_model=BatchListResponse)
+async def list_import_batches(
+    token_payload: dict = Depends(verify_supabase_token)
+):
+    """List all import batches for the current user."""
+    user_id = get_user_id(token_payload)
+    supabase = get_supabase_admin()
+
+    result = supabase.table('import_batch').select('*').eq(
+        'owner_id', user_id
+    ).order('created_at', desc=True).limit(20).execute()
+
+    batches = [
+        BatchInfo(
+            batch_id=b['batch_id'],
+            import_type=b['import_type'],
+            status=b['status'],
+            total_contacts=b['total_contacts'],
+            new_people=b['new_people'],
+            updated_people=b['updated_people'],
+            duplicates_found=b['duplicates_found'],
+            analytics=b['analytics'] or {},
+            created_at=b['created_at']
+        )
+        for b in result.data
+    ]
+
+    return BatchListResponse(batches=batches)
+
+
+class RollbackResult(BaseModel):
+    batch_id: str
+    rolled_back_count: int
+    status: str
+
+
+@router.post("/batches/{batch_id}/rollback", response_model=RollbackResult)
+async def rollback_import_batch(
+    batch_id: str,
+    token_payload: dict = Depends(verify_supabase_token)
+):
+    """
+    Rollback an import batch.
+
+    Soft-deletes all people created in this batch.
+    """
+    user_id = get_user_id(token_payload)
+    supabase = get_supabase_admin()
+
+    # Verify batch exists and belongs to user
+    batch_check = supabase.table('import_batch').select('*').eq(
+        'batch_id', batch_id
+    ).eq('owner_id', user_id).single().execute()
+
+    if not batch_check.data:
+        raise HTTPException(status_code=404, detail="Batch not found")
+
+    if batch_check.data['status'] == 'rolled_back':
+        raise HTTPException(status_code=400, detail="Batch already rolled back")
+
+    # Soft delete all people from this batch
+    update_result = supabase.table('person').update({
+        'status': 'deleted'
+    }).eq('import_batch_id', batch_id).eq('status', 'active').execute()
+
+    rolled_back_count = len(update_result.data) if update_result.data else 0
+
+    # Mark batch as rolled back
+    supabase.table('import_batch').update({
+        'status': 'rolled_back',
+        'rolled_back_at': 'now()'
+    }).eq('batch_id', batch_id).execute()
+
+    return RollbackResult(
+        batch_id=batch_id,
+        rolled_back_count=rolled_back_count,
+        status='rolled_back'
+    )

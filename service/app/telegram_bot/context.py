@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """
 Dialog context storage for Telegram bot.
 

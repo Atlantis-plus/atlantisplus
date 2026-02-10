@@ -805,16 +805,30 @@ railway open
 ```
 
 ### Frontend (GitHub Pages)
+
+**ВАЖНО: Деплой через GitHub Actions, НЕ через gh-pages!**
+
+GitHub Pages настроен на `build_type: workflow` — деплой происходит автоматически
+при пуше в main через GitHub Actions workflow "Deploy Frontend to GitHub Pages".
+
 ```bash
 # GitHub repo: evgenyq/atlantisplus
 # URL: https://evgenyq.github.io/atlantisplus/
 
-# Из папки frontend/
-cd /Users/evgenyq/Projects/atlantisplus/frontend
-npm run build
-npm run deploy  # или gh-pages -d dist
+# ПРАВИЛЬНЫЙ способ деплоя frontend:
+cd /Users/evgenyq/Projects/atlantisplus
+git add frontend/
+git commit -m "feat: description of changes"
+git push origin main
+# GitHub Actions автоматически соберёт и задеплоит
 
-# VITE_API_URL должен указывать на Railway:
+# НЕПРАВИЛЬНО (не работает!):
+# npm run deploy  # пушит в gh-pages branch, но сайт оттуда НЕ раздаётся
+
+# Проверить статус деплоя:
+gh run list --limit 3
+
+# VITE_API_URL (в frontend/.env):
 # Production: https://atlantisplus-production.up.railway.app
 # Local dev: http://localhost:8000
 ```
