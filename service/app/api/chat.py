@@ -1,6 +1,7 @@
 from typing import Optional
 from datetime import datetime, timedelta
 from uuid import UUID
+import re
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
@@ -41,52 +42,27 @@ TOOLS = [
             "name": "find_people",
             "description": """Universal search for people. Returns person_id for each result.
 
-IMPORTANT: Use semantic_query for ANY meaning-based search (companies, skills, topics, meetings, etc.)
-It searches ALL facts about people, not just specific fields.
+Use query for semantic search (companies, skills, topics, meetings, names).
+Use name_pattern for regex cleanup (e.g., "[0-9]" for digits in names).
 
 Examples:
-- "who works at Google" → semantic_query="Google" (NOT company_contains!)
-- "AI experts" → semantic_query="AI expert"
-- "met at conference" → semantic_query="conference"
-- "related to ByteDance" → semantic_query="ByteDance"
+- "who works at Google" → query="Google"
+- "AI experts" → query="AI expert"
+- "найди Васю" → query="Вася"
+- "all with digits in name" → name_pattern="[0-9]"
+- "meeting rooms" → query="meeting room conference"
 
-Filters (only for precise filtering, NOT for search):
-- name_contains/name_regex: filter by display name pattern
-- email_domain: filter by exact email domain
-- has_email: filter by email presence
-- import_source: filter by data source
-- company_contains: ONLY filters people with explicit 'works_at' assertion (rarely needed)""",
+Returns person_id for each result - use these IDs for subsequent operations.""",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "semantic_query": {
+                    "query": {
                         "type": "string",
-                        "description": "PRIMARY search method. Searches ALL facts about people by meaning. Use for companies, skills, topics, meetings, etc."
+                        "description": "Semantic search - searches ALL facts about people by meaning"
                     },
-                    "name_contains": {
+                    "name_pattern": {
                         "type": "string",
-                        "description": "Filter: name contains string"
-                    },
-                    "name_regex": {
-                        "type": "string",
-                        "description": "Filter: name matches regex (e.g., '[0-9]' for digits)"
-                    },
-                    "email_domain": {
-                        "type": "string",
-                        "description": "Filter: email from domain (e.g., 'zoom.us')"
-                    },
-                    "has_email": {
-                        "type": "boolean",
-                        "description": "Filter: true=with email, false=without"
-                    },
-                    "import_source": {
-                        "type": "string",
-                        "description": "Filter: data source",
-                        "enum": ["linkedin", "calendar", "voice_note"]
-                    },
-                    "company_contains": {
-                        "type": "string",
-                        "description": "Filter: ONLY people with 'works_at' field matching. Usually use semantic_query instead."
+                        "description": "Regex pattern to filter by name (e.g., '[0-9]' for digits, '^Room' for names starting with Room)"
                     },
                     "limit": {
                         "type": "integer",
@@ -210,26 +186,6 @@ Filters (only for precise filtering, NOT for search):
     {
         "type": "function",
         "function": {
-            "name": "delete_person",
-            "description": "Delete a person (soft delete). Use person_id from find_people.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "person_id": {
-                        "type": "string",
-                        "description": "UUID of person to delete (preferred)"
-                    },
-                    "person_name": {
-                        "type": "string",
-                        "description": "Name fallback"
-                    }
-                }
-            }
-        }
-    },
-    {
-        "type": "function",
-        "function": {
             "name": "edit_person",
             "description": "Rename a person. Use person_id from find_people.",
             "parameters": {
@@ -283,42 +239,28 @@ Filters (only for precise filtering, NOT for search):
     {
         "type": "function",
         "function": {
-            "name": "bulk_delete_people",
-            "description": "Delete multiple people matching criteria. Uses same filters as find_people. REQUIRES confirm=true.",
+            "name": "delete_people",
+            "description": """Delete multiple people by their IDs. Use person_ids from find_people results.
+
+Workflow:
+1. find_people(query="meeting rooms") → get list with person_id
+2. User says "delete first and third" → delete_people(person_ids=[id1, id3], confirm=true)
+
+REQUIRES confirm=true to actually delete.""",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "name_contains": {
-                        "type": "string",
-                        "description": "Delete people with name containing this"
-                    },
-                    "name_regex": {
-                        "type": "string",
-                        "description": "Delete people with name matching regex"
-                    },
-                    "email_domain": {
-                        "type": "string",
-                        "description": "Delete people with email from this domain"
-                    },
-                    "has_email": {
-                        "type": "boolean",
-                        "description": "If false, delete only without email"
-                    },
-                    "import_source": {
-                        "type": "string",
-                        "description": "Delete only from this source",
-                        "enum": ["linkedin", "calendar", "voice_note"]
-                    },
-                    "company_contains": {
-                        "type": "string",
-                        "description": "Delete people from companies matching this"
+                    "person_ids": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "List of person_id UUIDs to delete (from find_people results)"
                     },
                     "confirm": {
                         "type": "boolean",
                         "description": "MUST be true to delete. false = preview only."
                     }
                 },
-                "required": ["confirm"]
+                "required": ["person_ids", "confirm"]
             }
         }
     },
@@ -360,43 +302,40 @@ Filters (only for precise filtering, NOT for search):
 
 SYSTEM_PROMPT = """You are a personal network assistant helping the user manage and query their professional network.
 
-You have access to COMMUNITY DATA - people added by the user AND by other users in the community.
-
 ## CRITICAL: USE person_id FOR ALL OPERATIONS
 
-Every find_people result includes `person_id`. ALWAYS use person_id (not names) for subsequent operations:
+Every find_people result includes `person_id`. ALWAYS use person_id (not names) for subsequent operations.
 
-1. find_people → returns list with person_id for each person
-2. merge_people(person_a_id=..., person_b_id=...) - use IDs from step 1
-3. edit_person(person_id=..., new_name=...) - use ID
-4. delete_person(person_id=...) - use ID
-5. add_note_about_person(person_id=..., note=...) - use ID
+## WORKFLOW
 
-This ensures operations work even after renames, and avoids name ambiguity.
+1. **Search**: find_people(query="...") → returns list with person_id for each person
+2. **Operations**: Use person_id from results:
+   - merge_people(person_a_id=..., person_b_id=...)
+   - edit_person(person_id=..., new_name=...)
+   - delete_people(person_ids=[...], confirm=true)
+   - add_note_about_person(person_id=..., note=...)
 
-## FIND_PEOPLE - UNIVERSAL SEARCH
+## FIND_PEOPLE EXAMPLES
 | User says | Use |
 |-----------|-----|
-| "кто эксперт в AI" | find_people(semantic_query="AI expert") |
-| "все с цифрой в имени" | find_people(name_regex="[0-9]") |
-| "контакты с zoom.us" | find_people(email_domain="zoom.us") |
-| "все без email" | find_people(has_email=false) |
-| "все из календаря" | find_people(import_source="calendar") |
-| "кто из Google" | find_people(company_contains="Google") |
-| "покажи всех" | find_people() |
+| "кто эксперт в AI" | find_people(query="AI expert") |
+| "кто работает в Google" | find_people(query="Google") |
+| "найди Васю" | find_people(query="Вася") |
+| "все с цифрой в имени" | find_people(name_pattern="[0-9]") |
+| "переговорки и комнаты" | find_people(query="meeting room conference") |
 
 ## MERGE & EDIT WORKFLOW
 Example: User says "объедини Daliya227 и daliya227@yahoo.com, назови Daliya Safiullina"
 
-1. find_people(name_contains="Daliya227") → get person_ids
+1. find_people(query="Daliya") → get person_ids
 2. merge_people(person_a_id="...", person_b_id="...", new_display_name="Daliya Safiullina")
 
-All in one atomic operation using IDs!
+## DELETE WORKFLOW
+Example: User says "найди переговорки" → you show list → "удали первую и третью"
 
-## BULK OPERATIONS
-- ALWAYS preview first: bulk_delete_people(..., confirm=false)
-- Show what will be deleted
-- Then: bulk_delete_people(..., confirm=true)
+1. find_people(query="meeting rooms") → returns [{person_id: "abc", name: "Room1"}, {person_id: "def", name: "Room2"}, ...]
+2. User selects which to delete
+3. delete_people(person_ids=["abc", "xyz"], confirm=true) ← use IDs from step 1
 
 Guidelines:
 - Be concise but helpful
@@ -440,17 +379,13 @@ async def execute_tool(tool_name: str, args: dict, user_id: str) -> str:
 
     if tool_name == "find_people":
         limit = args.get('limit', 20)
-        print(f"[FIND_PEOPLE] Args: {args}, user_id: {user_id}")
+        query = args.get('query')
+        name_pattern = args.get('name_pattern')
+        print(f"[FIND_PEOPLE] query={query}, name_pattern={name_pattern}, limit={limit}")
 
-        has_structural_filters = any([
-            args.get('name_regex'), args.get('name_contains'), args.get('email_domain'),
-            args.get('has_email') is not None, args.get('import_source'), args.get('company_contains')
-        ])
-
-        # If semantic_query is primary (no structural filters), do semantic search first
-        if args.get('semantic_query') and not has_structural_filters:
-            print(f"[FIND_PEOPLE] Semantic-only search for: {args['semantic_query']}")
-            query_embedding = generate_embedding(args['semantic_query'])
+        # Semantic search (primary method)
+        if query:
+            query_embedding = generate_embedding(query)
             match_result = supabase.rpc(
                 'match_assertions_community',
                 {
@@ -460,84 +395,93 @@ async def execute_tool(tool_name: str, args: dict, user_id: str) -> str:
                 }
             ).execute()
 
-            if not match_result.data:
+            if match_result.data:
+                # Get unique person_ids and fetch their details
+                person_ids = list(set(m['subject_person_id'] for m in match_result.data))
+                people_result = supabase.table('person').select(
+                    'person_id, display_name, import_source, owner_id'
+                ).in_('person_id', person_ids).eq('owner_id', user_id).eq('status', 'active').execute()
+
+                # Get email status
+                email_check = supabase.table('identity').select('person_id').in_(
+                    'person_id', person_ids
+                ).eq('namespace', 'email').execute()
+                has_email_ids = set(e['person_id'] for e in email_check.data or [])
+
+                # Apply name_pattern filter if provided
+                people_data = people_result.data or []
+                if name_pattern:
+                    try:
+                        pattern = re.compile(name_pattern, re.IGNORECASE)
+                        people_data = [p for p in people_data if pattern.search(p['display_name'] or '')]
+                    except re.error:
+                        pass  # Invalid regex, skip filtering
+
+                results = []
+                for p in people_data[:limit]:
+                    results.append({
+                        'person_id': p['person_id'],
+                        'name': p['display_name'],
+                        'import_source': p.get('import_source') or 'manual',
+                        'has_email': p['person_id'] in has_email_ids
+                    })
+
+                print(f"[FIND_PEOPLE] Semantic search found {len(results)} people")
+                return json.dumps({
+                    'people': results,
+                    'total': len(people_data),
+                    'showing': len(results)
+                }, ensure_ascii=False, indent=2)
+            else:
                 return json.dumps({'people': [], 'total': 0, 'message': 'No people match the query'}, ensure_ascii=False)
 
-            # Get unique person_ids and fetch their details
-            person_ids = list(set(m['subject_person_id'] for m in match_result.data))
-            people_result = supabase.table('person').select(
-                'person_id, display_name, import_source, owner_id'
-            ).in_('person_id', person_ids).eq('owner_id', user_id).eq('status', 'active').execute()
+        # Name pattern only (regex filter) - use SQL function
+        if name_pattern:
+            result = supabase.rpc('find_people_filtered', {
+                'p_owner_id': user_id,
+                'p_name_regex': name_pattern,
+                'p_name_contains': None,
+                'p_email_domain': None,
+                'p_has_email': None,
+                'p_import_source': None,
+                'p_company_contains': None,
+                'p_limit': limit
+            }).execute()
 
-            # Get email status
-            email_check = supabase.table('identity').select('person_id').in_(
-                'person_id', person_ids
-            ).eq('namespace', 'email').execute()
-            has_email_ids = set(e['person_id'] for e in email_check.data or [])
+            if not result.data:
+                return json.dumps({'people': [], 'total': 0, 'message': 'No people match the pattern'}, ensure_ascii=False)
 
             results = []
-            for p in (people_result.data or [])[:limit]:
+            for p in result.data:
                 results.append({
                     'person_id': p['person_id'],
                     'name': p['display_name'],
                     'import_source': p.get('import_source') or 'manual',
-                    'has_email': p['person_id'] in has_email_ids,
-                    'is_own': True,
-                    'source': 'Мой контакт'
+                    'has_email': p.get('has_email', False)
                 })
 
-            print(f"[FIND_PEOPLE] Semantic search found {len(results)} people")
             return json.dumps({
                 'people': results,
-                'total': len(people_result.data or []),
+                'total': len(result.data),
                 'showing': len(results)
             }, ensure_ascii=False, indent=2)
 
-        # Structural filters: use SQL function
-        result = supabase.rpc('find_people_filtered', {
-            'p_owner_id': user_id,
-            'p_name_regex': args.get('name_regex'),
-            'p_name_contains': args.get('name_contains'),
-            'p_email_domain': args.get('email_domain'),
-            'p_has_email': args.get('has_email'),
-            'p_import_source': args.get('import_source'),
-            'p_company_contains': args.get('company_contains'),
-            'p_limit': limit * 5
-        }).execute()
-
-        print(f"[FIND_PEOPLE] SQL function returned {len(result.data) if result.data else 0} people")
-
-        if not result.data:
-            return json.dumps({'people': [], 'total': 0, 'message': 'No people match the criteria'}, ensure_ascii=False)
-
-        # Apply semantic filter on top if provided with structural filters
-        filtered_people = result.data
-        if args.get('semantic_query'):
-            query_embedding = generate_embedding(args['semantic_query'])
-            match_result = supabase.rpc(
-                'match_assertions_community',
-                {'query_embedding': query_embedding, 'match_threshold': 0.25, 'match_count': 100}
-            ).execute()
-            if match_result.data:
-                semantic_ids = set(m['subject_person_id'] for m in match_result.data)
-                filtered_people = [p for p in filtered_people if p['person_id'] in semantic_ids]
-            else:
-                filtered_people = []
+        # No search criteria - list all (limited)
+        result = supabase.table('person').select(
+            'person_id, display_name, import_source'
+        ).eq('owner_id', user_id).eq('status', 'active').limit(limit).execute()
 
         results = []
-        for p in filtered_people[:limit]:
+        for p in result.data or []:
             results.append({
                 'person_id': p['person_id'],
                 'name': p['display_name'],
-                'import_source': p.get('import_source') or 'manual',
-                'has_email': p.get('has_email', False),
-                'is_own': True,
-                'source': 'Мой контакт'
+                'import_source': p.get('import_source') or 'manual'
             })
 
         return json.dumps({
             'people': results,
-            'total': len(filtered_people),
+            'total': len(results),
             'showing': len(results)
         }, ensure_ascii=False, indent=2)
 
@@ -865,34 +809,6 @@ async def execute_tool(tool_name: str, args: dict, user_id: str) -> str:
             "total": len(candidates)
         }, ensure_ascii=False, indent=2)
 
-    elif tool_name == "delete_person":
-        # Prefer person_id
-        if args.get('person_id'):
-            person_result = supabase.table('person').select('person_id, display_name').eq(
-                'person_id', args['person_id']
-            ).eq('owner_id', user_id).eq('status', 'active').execute()
-            if not person_result.data:
-                return f"Person with ID {args['person_id']} not found."
-        elif args.get('person_name'):
-            person_result = supabase.table('person').select('person_id, display_name').eq(
-                'owner_id', user_id
-            ).ilike('display_name', f"%{args['person_name']}%").eq('status', 'active').execute()
-            if not person_result.data:
-                return f"Person '{args['person_name']}' not found."
-            if len(person_result.data) > 1:
-                people_list = [{'person_id': p['person_id'], 'name': p['display_name']} for p in person_result.data]
-                return json.dumps({'error': 'multiple_matches', 'matches': people_list}, ensure_ascii=False)
-        else:
-            return "Please provide person_id or person_name."
-
-        person = person_result.data[0]
-        supabase.table('person').update({
-            'status': 'deleted',
-            'updated_at': datetime.utcnow().isoformat()
-        }).eq('person_id', person['person_id']).execute()
-
-        return json.dumps({'success': True, 'deleted': person['display_name']}, ensure_ascii=False)
-
     elif tool_name == "edit_person":
         # Prefer person_id
         if args.get('person_id'):
@@ -957,45 +873,47 @@ async def execute_tool(tool_name: str, args: dict, user_id: str) -> str:
 
         return json.dumps({'success': True, 'person_a': person_a['display_name'], 'person_b': person_b['display_name']}, ensure_ascii=False)
 
-    elif tool_name == "bulk_delete_people":
+    elif tool_name == "delete_people":
+        person_ids = args.get('person_ids', [])
         confirm = args.get('confirm', False)
 
-        # Use SQL function for filtering - same as find_people
-        result = supabase.rpc('find_people_filtered', {
-            'p_owner_id': user_id,
-            'p_name_regex': args.get('name_regex'),
-            'p_name_contains': args.get('name_contains'),
-            'p_email_domain': args.get('email_domain'),
-            'p_has_email': args.get('has_email'),
-            'p_import_source': args.get('import_source'),
-            'p_company_contains': args.get('company_contains'),
-            'p_limit': 1000  # Higher limit for bulk ops
-        }).execute()
+        if not person_ids:
+            return "No person_ids provided. Use find_people first to get IDs."
+
+        # Verify all IDs belong to user and are active
+        result = supabase.table('person').select(
+            'person_id, display_name'
+        ).in_('person_id', person_ids).eq('owner_id', user_id).eq('status', 'active').execute()
 
         if not result.data:
-            return "No people found matching criteria."
+            return "No matching people found. Check that IDs are correct and belong to you."
 
-        filtered_people = result.data
+        found_people = result.data
+        found_ids = [p['person_id'] for p in found_people]
+
+        # Check for missing IDs
+        missing = set(person_ids) - set(found_ids)
+        if missing:
+            print(f"[DELETE_PEOPLE] Warning: {len(missing)} IDs not found or not owned by user")
 
         if not confirm:
-            sample_names = [p['display_name'] for p in filtered_people[:10]]
             return json.dumps({
                 'preview': True,
-                'will_delete': len(filtered_people),
-                'sample': sample_names,
-                'message': f"This will delete {len(filtered_people)} people. Set confirm=true to proceed."
-            }, ensure_ascii=False)
+                'will_delete': len(found_people),
+                'people': [{'person_id': p['person_id'], 'name': p['display_name']} for p in found_people],
+                'message': f"This will delete {len(found_people)} people. Call with confirm=true to proceed."
+            }, ensure_ascii=False, indent=2)
 
         # Actually delete
-        person_ids_to_delete = [p['person_id'] for p in filtered_people]
         supabase.table('person').update({
             'status': 'deleted',
             'updated_at': datetime.utcnow().isoformat()
-        }).in_('person_id', person_ids_to_delete).execute()
+        }).in_('person_id', found_ids).execute()
 
         return json.dumps({
-            'deleted': len(filtered_people),
-            'message': f"Deleted {len(filtered_people)} people."
+            'deleted': len(found_people),
+            'deleted_names': [p['display_name'] for p in found_people],
+            'message': f"Deleted {len(found_people)} people."
         }, ensure_ascii=False)
 
     elif tool_name == "get_import_stats":
