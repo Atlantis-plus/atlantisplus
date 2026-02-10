@@ -218,6 +218,7 @@ class ApiClient {
     duplicates_found: number;
     updated: number;
     batch_id: string;
+    evidence_id: string;
     analytics: {
       by_year: Record<string, number>;
       by_company: Record<string, number>;
@@ -318,6 +319,7 @@ class ApiClient {
     skipped_duplicates: number;
     updated_existing: number;
     batch_id: string;
+    evidence_id: string;
     analytics: {
       by_frequency: Record<string, number>;
       date_range: string;

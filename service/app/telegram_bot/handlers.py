@@ -412,7 +412,7 @@ async def handle_voice_message(update: Update, context: ContextTypes.DEFAULT_TYP
             "owner_id": supabase_user["user_id"],
             "source_type": "voice_note",
             "content": "",  # Will be updated with transcript
-            "audio_storage_path": storage_path,
+            "storage_path": storage_path,
             "processing_status": "transcribing"
         }).execute()
 

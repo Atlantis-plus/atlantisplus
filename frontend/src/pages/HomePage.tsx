@@ -1,7 +1,8 @@
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { useAuth } from '../hooks/useAuth';
 import { api } from '../lib/api';
 import { openExternalLink } from '../lib/telegram';
+import { supabase } from '../lib/supabase';
 
 type Page = 'home' | 'notes' | 'search' | 'people' | 'chat';
 
@@ -46,6 +47,7 @@ interface LinkedInResult {
   duplicates_found: number;
   updated: number;
   batch_id: string;
+  evidence_id: string;
   analytics: LinkedInAnalytics;
   dedup_result: DedupResult | null;
 }
@@ -88,8 +90,18 @@ interface CalendarResult {
   skipped_duplicates: number;
   updated_existing: number;
   batch_id: string;
+  evidence_id: string;
   analytics: CalendarAnalytics;
   dedup_result: DedupResult | null;
+}
+
+// Progress tracking
+type ProcessingStatus = 'pending' | 'extracting' | 'done' | 'error';
+
+interface ImportProgress {
+  evidenceId: string | null;
+  status: ProcessingStatus;
+  error: string | null;
 }
 
 export const HomePage = ({ onNavigate }: HomePageProps) => {
@@ -111,6 +123,65 @@ export const HomePage = ({ onNavigate }: HomePageProps) => {
   const [calendarLoading, setCalendarLoading] = useState(false);
   const [calendarError, setCalendarError] = useState<string | null>(null);
   const [ownerEmail, setOwnerEmail] = useState<string>('');
+
+  // Progress state for real-time updates
+  const [linkedInProgress, setLinkedInProgress] = useState<ImportProgress>({
+    evidenceId: null,
+    status: 'pending',
+    error: null
+  });
+  const [calendarProgress, setCalendarProgress] = useState<ImportProgress>({
+    evidenceId: null,
+    status: 'pending',
+    error: null
+  });
+
+  // Subscribe to real-time progress updates
+  useEffect(() => {
+    if (!linkedInProgress.evidenceId && !calendarProgress.evidenceId) return;
+
+    const evidenceIds = [linkedInProgress.evidenceId, calendarProgress.evidenceId].filter(Boolean);
+    if (evidenceIds.length === 0) return;
+
+    const channel = supabase
+      .channel('import-progress')
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'raw_evidence',
+          filter: `evidence_id=in.(${evidenceIds.join(',')})`
+        },
+        (payload) => {
+          const { evidence_id, processing_status, error_message } = payload.new as {
+            evidence_id: string;
+            processing_status: ProcessingStatus;
+            error_message: string | null;
+          };
+
+          if (evidence_id === linkedInProgress.evidenceId) {
+            setLinkedInProgress(prev => ({
+              ...prev,
+              status: processing_status,
+              error: error_message
+            }));
+          }
+          if (evidence_id === calendarProgress.evidenceId) {
+            setCalendarProgress(prev => ({
+              ...prev,
+              status: processing_status,
+              error: error_message
+            }));
+          }
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [linkedInProgress.evidenceId, calendarProgress.evidenceId]);
 
   // LinkedIn handlers
   const handleLinkedInFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -337,10 +408,24 @@ export const HomePage = ({ onNavigate }: HomePageProps) => {
                     >
                       {linkedInLoading ? 'Importing...' : `Import ${linkedInPreview.total_contacts} Contacts`}
                     </button>
-                    <button onClick={handleLinkedInReset} className="cancel-btn">
+                    <button onClick={handleLinkedInReset} className="cancel-btn" disabled={linkedInLoading}>
                       Cancel
                     </button>
                   </div>
+
+                  {linkedInLoading && (
+                    <div className="progress-section">
+                      <div className="progress-bar">
+                        <div className="progress-fill progress-animated"></div>
+                      </div>
+                      <div className="progress-steps">
+                        <span className="step active">Uploading</span>
+                        <span className="step">Processing</span>
+                        <span className="step">Creating contacts</span>
+                        <span className="step">Finding duplicates</span>
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
 
@@ -527,10 +612,24 @@ export const HomePage = ({ onNavigate }: HomePageProps) => {
                     >
                       {calendarLoading ? 'Importing...' : `Import ${calendarPreview.unique_attendees} People`}
                     </button>
-                    <button onClick={handleCalendarReset} className="cancel-btn">
+                    <button onClick={handleCalendarReset} className="cancel-btn" disabled={calendarLoading}>
                       Cancel
                     </button>
                   </div>
+
+                  {calendarLoading && (
+                    <div className="progress-section">
+                      <div className="progress-bar">
+                        <div className="progress-fill progress-animated"></div>
+                      </div>
+                      <div className="progress-steps">
+                        <span className="step active">Uploading</span>
+                        <span className="step">Processing calendar</span>
+                        <span className="step">Creating contacts</span>
+                        <span className="step">Finding duplicates</span>
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
 

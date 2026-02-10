@@ -51,6 +51,7 @@ class CalendarImportResult(BaseModel):
     skipped_duplicates: int
     updated_existing: int
     batch_id: str
+    evidence_id: str  # For frontend to subscribe to progress
     analytics: dict
     dedup_result: Optional[dict] = None
 
@@ -243,20 +244,55 @@ async def import_calendar(
     - Creates or finds person by email
     - Creates assertions for meeting context
     - Tracks import in batch table for analytics and rollback
+    - Saves original file to Storage for audit trail
+    - Creates raw_evidence with progress status for frontend
     """
     user_id = get_user_id(token_payload)
     supabase = get_supabase_admin()
 
+    # Read file content
     try:
         content = await file.read()
+        file_size = len(content)
+        file_name = file.filename or 'calendar.ics'
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Failed to read file: {str(e)}")
+
+    # Create raw_evidence immediately (status=pending) so frontend can subscribe
+    evidence_result = supabase.table('raw_evidence').insert({
+        'owner_id': user_id,
+        'source_type': 'import',
+        'content': f"Calendar import: processing {file_name}...",
+        'metadata': {
+            'import_type': 'calendar',
+            'file_name': file_name,
+            'file_size': file_size
+        },
+        'processing_status': 'pending'
+    }).execute()
+    evidence_id = evidence_result.data[0]['evidence_id']
+
+    def update_status(status: str, content: Optional[str] = None, error: Optional[str] = None):
+        """Helper to update raw_evidence status"""
+        update_data = {'processing_status': status}
+        if content:
+            update_data['content'] = content
+        if error:
+            update_data['error_message'] = error
+        supabase.table('raw_evidence').update(update_data).eq('evidence_id', evidence_id).execute()
+
+    try:
+        # Parse ICS file
         events, attendees = parse_ics_file(content, owner_email)
     except Exception as e:
+        update_status('error', error=f"Failed to parse ICS: {str(e)}")
         raise HTTPException(status_code=400, detail=f"Failed to parse ICS: {str(e)}")
 
     if not events:
+        update_status('error', error="No events with attendees found")
         raise HTTPException(status_code=400, detail="No events with attendees found")
 
-    # Calculate analytics before import
+    # Calculate analytics
     analytics = calculate_calendar_analytics(events, attendees)
 
     # Create import batch for tracking
@@ -267,6 +303,35 @@ async def import_calendar(
         'analytics': analytics
     }).execute()
     batch_id = batch_result.data[0]['batch_id']
+
+    # Upload file to Storage
+    storage_path = f"{user_id}/{batch_id}/{file_name}"
+    try:
+        supabase.storage.from_('imports').upload(
+            storage_path,
+            content,
+            file_options={"content-type": "text/calendar"}
+        )
+    except Exception as e:
+        print(f"[CALENDAR IMPORT] Failed to upload to storage: {e}")
+        # Continue anyway - storage is nice-to-have
+
+    # Update raw_evidence with batch_id and storage path
+    supabase.table('raw_evidence').update({
+        'storage_path': storage_path,
+        'content': f"Calendar import: {len(attendees)} attendees from {len(events)} events",
+        'metadata': {
+            'import_type': 'calendar',
+            'batch_id': batch_id,
+            'file_name': file_name,
+            'file_size': file_size,
+            'stats': {
+                'events': len(events),
+                'attendees': len(attendees)
+            }
+        },
+        'processing_status': 'extracting'
+    }).eq('evidence_id', evidence_id).execute()
 
     imported_people = 0
     skipped_duplicates = 0
@@ -284,60 +349,69 @@ async def import_calendar(
         ).eq('namespace', 'email').eq('value', email).execute()
 
         if existing.data:
-            # Person exists - add calendar context if new
+            # Person exists by exact email match - add calendar context
             person_id = existing.data[0]['person_id']
             updated_existing += 1
             is_new = False
         else:
-            # Check by name similarity (for people without email in LinkedIn import)
-            name_check = supabase.table('person').select(
-                'person_id'
-            ).eq('owner_id', user_id).ilike(
-                'display_name', f"%{name}%"
-            ).eq('status', 'active').execute()
+            # No email match - always create new person
+            # (Name matching is too unreliable for auto-merge)
+            person_result = supabase.table('person').insert({
+                'owner_id': user_id,
+                'display_name': name,
+                'status': 'active',
+                'import_source': 'calendar',
+                'import_batch_id': batch_id
+            }).execute()
 
-            if name_check.data:
-                # Found similar name - add email identity
-                person_id = name_check.data[0]['person_id']
-                try:
-                    supabase.table('identity').insert({
-                        'person_id': person_id,
-                        'namespace': 'email',
-                        'value': email
-                    }).execute()
-                except:
-                    pass
-                updated_existing += 1
-                is_new = False
-            else:
-                # Create new person with batch tracking
-                person_result = supabase.table('person').insert({
-                    'owner_id': user_id,
-                    'display_name': name,
-                    'status': 'active',
-                    'import_source': 'calendar',
-                    'import_batch_id': batch_id
-                }).execute()
+            person_id = person_result.data[0]['person_id']
+            new_person_ids.append(person_id)
+            is_new = True
 
-                person_id = person_result.data[0]['person_id']
-                new_person_ids.append(person_id)
-                is_new = True
+            # Create email identity
+            supabase.table('identity').insert({
+                'person_id': person_id,
+                'namespace': 'email',
+                'value': email
+            }).execute()
 
-                # Create email identity
-                supabase.table('identity').insert({
-                    'person_id': person_id,
-                    'namespace': 'email',
-                    'value': email
-                }).execute()
+            # Create calendar_name identity
+            supabase.table('identity').insert({
+                'person_id': person_id,
+                'namespace': 'calendar_name',
+                'value': name
+            }).execute()
 
-                # Create calendar_name identity
-                supabase.table('identity').insert({
-                    'person_id': person_id,
-                    'namespace': 'calendar_name',
-                    'value': name
-                }).execute()
+            imported_people += 1
 
-                imported_people += 1
+            # Check for similar names and log as potential duplicates for review
+            # (NOT auto-merge - just record for later review)
+            similar_check = supabase.table('person').select(
+                'person_id', 'display_name'
+            ).eq('owner_id', user_id).neq(
+                'person_id', person_id
+            ).ilike(
+                'display_name', f"%{name.split()[0]}%"  # Only first name for fuzzy match
+            ).eq('status', 'active').limit(5).execute()
+
+            if similar_check.data:
+                for similar in similar_check.data:
+                    try:
+                        supabase.table('person_match_candidate').insert({
+                            'a_person_id': person_id,
+                            'b_person_id': similar['person_id'],
+                            'score': 0.5,  # Low score - just name similarity
+                            'reasons': {
+                                'type': 'name_similarity_on_import',
+                                'new_name': name,
+                                'existing_name': similar['display_name'],
+                                'source': 'calendar'
+                            },
+                            'status': 'pending'
+                        }).execute()
+                    except Exception as e:
+                        # Ignore duplicate candidate errors
+                        pass
 
         # Find events with this attendee and create meeting assertions
         person_events = [
@@ -399,6 +473,12 @@ async def import_calendar(
             print(f"[CALENDAR IMPORT] Dedup failed: {e}")
             dedup_result = {"error": str(e)}
 
+    # Mark import as complete
+    supabase.table('raw_evidence').update({
+        'processed': True,
+        'processing_status': 'done'
+    }).eq('evidence_id', evidence_id).execute()
+
     # Send Telegram notification
     try:
         proactive_service = get_proactive_service()
@@ -420,6 +500,7 @@ async def import_calendar(
         skipped_duplicates=skipped_duplicates,
         updated_existing=updated_existing,
         batch_id=batch_id,
+        evidence_id=evidence_id,
         analytics=analytics,
         dedup_result=dedup_result
     )
