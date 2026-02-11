@@ -376,9 +376,9 @@ class EnrichmentService:
             if self._create_identity(person_id, "linkedin_url", data["linkedin_url"]):
                 identities_created += 1
 
-        # Email → identity (hashed)
+        # Email → identity (hashed) - check isinstance as PDL may return bools in array
         for email in (data.get("emails") or [])[:3]:
-            if email.get("address"):
+            if isinstance(email, dict) and email.get("address"):
                 email_hash = hashlib.sha256(email["address"].lower().encode()).hexdigest()
                 if self._create_identity(person_id, "email_hash", email_hash):
                     identities_created += 1
@@ -389,12 +389,16 @@ class EnrichmentService:
             self._create_assertion(person_id, "background", f"Industry: {industry}")
             assertions_created += 1
 
-        # Education → assertion
+        # Education → assertion - check isinstance as PDL may return bools in array
         for edu in (data.get("education") or [])[:2]:
-            if edu.get("school") and edu.get("school", {}).get("name"):
-                edu_text = edu["school"]["name"]
-                if edu.get("degrees"):
-                    edu_text = f"{', '.join(edu['degrees'])} from {edu_text}"
+            if not isinstance(edu, dict):
+                continue
+            school = edu.get("school")
+            if isinstance(school, dict) and school.get("name"):
+                edu_text = school["name"]
+                degrees = edu.get("degrees")
+                if isinstance(degrees, list) and degrees:
+                    edu_text = f"{', '.join(str(d) for d in degrees if d)} from {edu_text}"
                 self._create_assertion(person_id, "background", f"Education: {edu_text}")
                 assertions_created += 1
 
