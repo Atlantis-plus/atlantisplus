@@ -2,21 +2,23 @@
 LinkedIn CSV Import API.
 
 Imports connections from LinkedIn CSV export.
+Uses background processing for large imports.
 """
 
+import asyncio
 import csv
 import io
 from datetime import datetime
 from typing import Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, BackgroundTasks
 from pydantic import BaseModel
 
 from app.config import get_settings
 from app.supabase_client import get_supabase_admin
 from app.middleware.auth import verify_supabase_token, get_user_id
-from app.services.embedding import generate_embedding
+from app.services.embedding import generate_embeddings_batch
 from app.services.dedup import get_dedup_service
 from app.services.proactive import get_proactive_service
 from app.services.import_analytics import calculate_linkedin_analytics
@@ -56,22 +58,54 @@ def parse_linkedin_csv(content: str) -> list[LinkedInContact]:
     """
     Parse LinkedIn connections CSV.
 
-    LinkedIn CSV format:
-    First Name,Last Name,Email Address,Company,Position,Connected On
+    Handles different LinkedIn export formats by finding the header row.
     """
     contacts = []
+
+    # Remove BOM if present
+    if content.startswith('\ufeff'):
+        content = content[1:]
+
+    # Find the header row (contains "First Name" or similar)
+    lines = content.split('\n')
+    header_idx = 0
+    for i, line in enumerate(lines):
+        line_lower = line.lower()
+        if 'first name' in line_lower or 'firstname' in line_lower:
+            header_idx = i
+            print(f"[LINKEDIN CSV] Found header at line {i}: {line[:100]}")
+            break
+
+    # Skip rows before header
+    if header_idx > 0:
+        print(f"[LINKEDIN CSV] Skipping {header_idx} rows before header")
+        content = '\n'.join(lines[header_idx:])
 
     # Try to detect encoding and parse
     reader = csv.DictReader(io.StringIO(content))
 
+    # Log headers for debugging
+    print(f"[LINKEDIN CSV] Headers: {reader.fieldnames}")
+
     for row in reader:
-        # Handle different possible column names
-        first_name = row.get('First Name') or row.get('first_name') or ''
-        last_name = row.get('Last Name') or row.get('last_name') or ''
-        email = row.get('Email Address') or row.get('email') or row.get('Email') or None
-        company = row.get('Company') or row.get('company') or None
-        position = row.get('Position') or row.get('position') or row.get('Title') or None
-        connected_on = row.get('Connected On') or row.get('connected_on') or None
+        # Log first row for debugging
+        if not contacts:
+            print(f"[LINKEDIN CSV] First row keys: {list(row.keys())}")
+            print(f"[LINKEDIN CSV] First row values: {list(row.values())[:5]}")
+
+        # Handle different possible column names (LinkedIn format varies by language/version)
+        first_name = (row.get('First Name') or row.get('first_name') or
+                     row.get('Имя') or row.get('FirstName') or '')
+        last_name = (row.get('Last Name') or row.get('last_name') or
+                    row.get('Фамилия') or row.get('LastName') or '')
+        email = (row.get('Email Address') or row.get('email') or row.get('Email') or
+                row.get('E-mail Address') or row.get('Адрес электронной почты') or None)
+        company = (row.get('Company') or row.get('company') or
+                  row.get('Компания') or row.get('Organization') or None)
+        position = (row.get('Position') or row.get('position') or row.get('Title') or
+                   row.get('Должность') or row.get('Job Title') or None)
+        connected_on = (row.get('Connected On') or row.get('connected_on') or
+                       row.get('Дата установления связи') or row.get('Connection Date') or None)
 
         # Skip empty rows
         if not first_name and not last_name:
@@ -107,9 +141,13 @@ async def preview_linkedin_import(
 
     Returns count and sample of contacts.
     """
+    user_id = get_user_id(token_payload)
+    supabase = get_supabase_admin()
+
     # Read file content
     try:
         content = await file.read()
+        file_name = file.filename or 'connections.csv'
         # Try UTF-8 first, then latin-1
         try:
             text = content.decode('utf-8')
@@ -118,6 +156,23 @@ async def preview_linkedin_import(
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Failed to read file: {str(e)}")
 
+    # Save to storage for debugging (even on preview)
+    debug_path = f"{user_id}/debug/{file_name}"
+    try:
+        supabase.storage.from_('imports').upload(
+            debug_path, content,
+            file_options={"content-type": "text/csv", "upsert": "true"}
+        )
+        print(f"[LINKEDIN PREVIEW] Saved debug file to {debug_path}")
+    except Exception as e:
+        print(f"[LINKEDIN PREVIEW] Failed to save debug file: {e}")
+
+    # Log first lines for debugging
+    lines = text.split('\n')[:5]
+    print(f"[LINKEDIN PREVIEW] First 5 lines:")
+    for i, line in enumerate(lines):
+        print(f"  {i}: {line[:200]}")
+
     # Parse CSV
     try:
         contacts = parse_linkedin_csv(text)
@@ -125,7 +180,7 @@ async def preview_linkedin_import(
         raise HTTPException(status_code=400, detail=f"Failed to parse CSV: {str(e)}")
 
     if not contacts:
-        raise HTTPException(status_code=400, detail="No contacts found in CSV")
+        raise HTTPException(status_code=400, detail=f"No contacts found in CSV. Headers detected: check logs")
 
     # Calculate stats
     with_email = sum(1 for c in contacts if c.email)
@@ -142,19 +197,26 @@ async def preview_linkedin_import(
     )
 
 
-@router.post("/linkedin", response_model=ImportResult)
+class ImportStartResponse(BaseModel):
+    """Response for starting an import (background processing)"""
+    evidence_id: str
+    batch_id: str
+    total_contacts: int
+    message: str
+
+
+@router.post("/linkedin", response_model=ImportStartResponse, status_code=202)
 async def import_linkedin_csv(
     file: UploadFile = File(...),
     skip_duplicates: bool = True,
+    background_tasks: BackgroundTasks = None,
     token_payload: dict = Depends(verify_supabase_token)
 ):
     """
     Import LinkedIn connections from CSV.
 
-    Creates person records with assertions for company, position, and connection date.
-    Tracks import in batch table for analytics and rollback.
-    Saves original file to Storage for audit trail.
-    Creates raw_evidence with progress status for frontend.
+    Returns immediately with evidence_id for tracking.
+    Processing happens in background - subscribe to raw_evidence for updates.
     """
     user_id = get_user_id(token_payload)
     supabase = get_supabase_admin()
@@ -171,47 +233,18 @@ async def import_linkedin_csv(
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Failed to read file: {str(e)}")
 
-    # Create raw_evidence immediately (status=pending) so frontend can subscribe
-    evidence_result = supabase.table('raw_evidence').insert({
-        'owner_id': user_id,
-        'source_type': 'import',
-        'content': f"LinkedIn import: processing {file_name}...",
-        'metadata': {
-            'import_type': 'linkedin',
-            'file_name': file_name,
-            'file_size': file_size
-        },
-        'processing_status': 'pending'
-    }).execute()
-    evidence_id = evidence_result.data[0]['evidence_id']
-
-    def update_status(status: str, content: Optional[str] = None, error: Optional[str] = None):
-        """Helper to update raw_evidence status"""
-        update_data = {'processing_status': status}
-        if content:
-            update_data['content'] = content
-        if error:
-            update_data['error_message'] = error
-        supabase.table('raw_evidence').update(update_data).eq('evidence_id', evidence_id).execute()
-
-    # Parse CSV
+    # Parse CSV first to validate
     try:
         contacts = parse_linkedin_csv(text)
     except Exception as e:
-        update_status('error', error=f"Failed to parse CSV: {str(e)}")
         raise HTTPException(status_code=400, detail=f"Failed to parse CSV: {str(e)}")
 
     if not contacts:
-        update_status('error', error="No contacts found in CSV")
         raise HTTPException(status_code=400, detail="No contacts found in CSV")
 
     # Calculate analytics
     contacts_for_analytics = [
-        {
-            'connected_on': c.connected_on,
-            'company': c.company,
-            'email': c.email
-        }
+        {'connected_on': c.connected_on, 'company': c.company, 'email': c.email}
         for c in contacts
     ]
     analytics = calculate_linkedin_analytics(contacts_for_analytics)
@@ -229,172 +262,181 @@ async def import_linkedin_csv(
     storage_path = f"{user_id}/{batch_id}/{file_name}"
     try:
         supabase.storage.from_('imports').upload(
-            storage_path,
-            content,
+            storage_path, content,
             file_options={"content-type": "text/csv"}
         )
     except Exception as e:
         print(f"[LINKEDIN IMPORT] Failed to upload to storage: {e}")
-        # Continue anyway - storage is nice-to-have
 
-    # Update raw_evidence with batch_id and storage path
-    supabase.table('raw_evidence').update({
-        'storage_path': storage_path,
+    # Create raw_evidence for progress tracking
+    evidence_result = supabase.table('raw_evidence').insert({
+        'owner_id': user_id,
+        'source_type': 'import',
         'content': f"LinkedIn import: {len(contacts)} contacts",
+        'storage_path': storage_path,
         'metadata': {
             'import_type': 'linkedin',
             'batch_id': batch_id,
             'file_name': file_name,
             'file_size': file_size,
-            'stats': {
-                'contacts': len(contacts),
-                'with_email': sum(1 for c in contacts if c.email)
-            }
+            'stats': {'contacts': len(contacts), 'with_email': sum(1 for c in contacts if c.email)}
         },
-        'processing_status': 'extracting'
-    }).eq('evidence_id', evidence_id).execute()
+        'processing_status': 'pending'
+    }).execute()
+    evidence_id = evidence_result.data[0]['evidence_id']
 
-    def rollback_batch(batch_id: str, error_msg: str):
-        """Rollback all data created for this batch on error"""
+    # Start background processing
+    asyncio.create_task(
+        process_linkedin_import_background(
+            user_id=user_id,
+            batch_id=batch_id,
+            evidence_id=evidence_id,
+            contacts=contacts,
+            skip_duplicates=skip_duplicates,
+            analytics=analytics
+        )
+    )
+
+    return ImportStartResponse(
+        evidence_id=evidence_id,
+        batch_id=batch_id,
+        total_contacts=len(contacts),
+        message=f"Import started. Processing {len(contacts)} contacts in background."
+    )
+
+
+async def process_linkedin_import_background(
+    user_id: str,
+    batch_id: str,
+    evidence_id: str,
+    contacts: list[LinkedInContact],
+    skip_duplicates: bool,
+    analytics: dict
+):
+    """
+    Background task for LinkedIn import.
+
+    Optimizations:
+    - Batch duplicate check (1 query instead of N)
+    - Batch person INSERT (groups of 100)
+    - Batch embeddings (1 API call per 2000)
+    - Batch assertion INSERT (groups of 100)
+    """
+    supabase = get_supabase_admin()
+
+    def update_status(status: str, content: Optional[str] = None, error: Optional[str] = None):
+        update_data = {'processing_status': status}
+        if content:
+            update_data['content'] = content
+        if error:
+            update_data['error_message'] = error
+        supabase.table('raw_evidence').update(update_data).eq('evidence_id', evidence_id).execute()
+
+    def rollback_batch(error_msg: str):
         try:
-            # Get all people created in this batch
-            people = supabase.table('person').select('person_id').eq(
-                'import_batch_id', batch_id
-            ).execute()
+            people = supabase.table('person').select('person_id').eq('import_batch_id', batch_id).execute()
             person_ids = [p['person_id'] for p in people.data] if people.data else []
-
             if person_ids:
-                # Delete identities first
                 supabase.table('identity').delete().in_('person_id', person_ids).execute()
-                # Delete assertions
                 supabase.table('assertion').delete().in_('subject_person_id', person_ids).execute()
-                # Delete people
                 supabase.table('person').delete().in_('person_id', person_ids).execute()
-
-            # Mark batch as failed
-            supabase.table('import_batch').update({
-                'status': 'rolled_back'
-            }).eq('batch_id', batch_id).execute()
-
-            # Update evidence status
+            supabase.table('import_batch').update({'status': 'rolled_back'}).eq('batch_id', batch_id).execute()
             update_status('error', error=error_msg)
         except Exception as e:
             print(f"[LINKEDIN IMPORT] Rollback failed: {e}")
 
-    imported = 0
-    updated = 0
-    skipped = 0
-    duplicates_found = 0
-    details = []
-    new_person_ids = []
-
     try:
-        for contact in contacts:
-            display_name = f"{contact.first_name} {contact.last_name}".strip()
+        update_status('extracting', content=f"Checking duplicates...")
 
+        # PHASE 1: Batch check for existing emails
+        emails_to_check = [c.email.lower() for c in contacts if c.email]
+        existing_emails = set()
+
+        if emails_to_check:
+            # Check in batches of 500 (Supabase limit)
+            for i in range(0, len(emails_to_check), 500):
+                batch_emails = emails_to_check[i:i+500]
+                result = supabase.table('identity').select('value').eq(
+                    'namespace', 'email'
+                ).in_('value', batch_emails).execute()
+                existing_emails.update(r['value'] for r in result.data)
+
+        print(f"[LINKEDIN IMPORT] Found {len(existing_emails)} existing emails")
+
+        # PHASE 2: Prepare and batch insert persons
+        update_status('extracting', content=f"Creating contacts...")
+
+        imported = 0
+        skipped = 0
+        duplicates_found = 0
+
+        # Prepare persons for batch insert
+        persons_to_create = []
+        contact_to_person_idx = {}  # Map contact index to persons_to_create index
+
+        for i, contact in enumerate(contacts):
+            display_name = f"{contact.first_name} {contact.last_name}".strip()
             if not display_name:
                 skipped += 1
                 continue
 
-            # Check for existing person with same name or email
-            existing_person = None
-
-            # Check by email only (name matching is too unreliable for auto-merge)
-            if contact.email:
-                email_check = supabase.table('identity').select(
-                    'person_id'
-                ).eq('namespace', 'email').eq('value', contact.email.lower()).execute()
-
-                if email_check.data:
-                    existing_person = email_check.data[0]['person_id']
-
-            # NOTE: We no longer auto-merge by name similarity
-            # Name matching creates too many false positives (e.g., "Serge" matching "Serge Faguet")
-            # Instead, we create new person and log potential duplicates for manual review
-
-            if existing_person:
+            # Check if email already exists
+            if contact.email and contact.email.lower() in existing_emails:
                 if skip_duplicates:
                     duplicates_found += 1
                     skipped += 1
-                    details.append({
-                        'name': display_name,
-                        'status': 'skipped',
-                        'reason': 'duplicate'
-                    })
                     continue
-                else:
-                    # Update existing person - add new assertions
-                    person_id = existing_person
-                    updated += 1
-                    is_new = False
-            else:
-                # Create new person with batch tracking
-                person_result = supabase.table('person').insert({
-                    'owner_id': user_id,
-                    'display_name': display_name,
-                    'status': 'active',
-                    'import_source': 'linkedin',
-                    'import_batch_id': batch_id
-                }).execute()
 
-                person_id = person_result.data[0]['person_id']
-                new_person_ids.append(person_id)
-                is_new = True
+            contact_to_person_idx[i] = len(persons_to_create)
+            persons_to_create.append({
+                'owner_id': user_id,
+                'display_name': display_name,
+                'status': 'active',
+                'import_source': 'linkedin',
+                'import_batch_id': batch_id
+            })
 
-                # Check for similar names and log as potential duplicates for review
-                # (NOT auto-merge - just record for later review via batch dedup)
-                first_name = contact.first_name.strip()
-                if first_name and len(first_name) >= 3:  # Only check if first name is meaningful
-                    similar_check = supabase.table('person').select(
-                        'person_id', 'display_name'
-                    ).eq('owner_id', user_id).neq(
-                        'person_id', person_id
-                    ).ilike(
-                        'display_name', f"{first_name}%"  # Starts with first name
-                    ).eq('status', 'active').limit(5).execute()
+        print(f"[LINKEDIN IMPORT] Creating {len(persons_to_create)} new persons...")
 
-                    if similar_check.data:
-                        for similar in similar_check.data:
-                            try:
-                                supabase.table('person_match_candidate').insert({
-                                    'a_person_id': person_id,
-                                    'b_person_id': similar['person_id'],
-                                    'score': 0.5,  # Low score - just name similarity
-                                    'reasons': {
-                                        'type': 'name_similarity_on_import',
-                                        'new_name': display_name,
-                                        'existing_name': similar['display_name'],
-                                        'source': 'linkedin'
-                                    },
-                                    'status': 'pending'
-                                }).execute()
-                            except Exception:
-                                # Ignore duplicate candidate errors
-                                pass
+        # Batch insert persons (groups of 100)
+        created_person_ids = []
+        for batch_start in range(0, len(persons_to_create), 100):
+            batch_chunk = persons_to_create[batch_start:batch_start + 100]
+            result = supabase.table('person').insert(batch_chunk).execute()
+            created_person_ids.extend(p['person_id'] for p in result.data)
 
-            # Create identities
-            identities_to_create = [
-                {'person_id': person_id, 'namespace': 'linkedin_name', 'value': display_name}
-            ]
+            progress = min(batch_start + 100, len(persons_to_create))
+            update_status('extracting', content=f"Created {progress}/{len(persons_to_create)} contacts")
+
+        imported = len(created_person_ids)
+        print(f"[LINKEDIN IMPORT] Created {imported} persons")
+
+        # PHASE 3: Collect and batch insert identities
+        update_status('extracting', content=f"Adding identities...")
+
+        all_identities = []
+        all_assertions = []
+
+        for contact_idx, person_idx in contact_to_person_idx.items():
+            contact = contacts[contact_idx]
+            person_id = created_person_ids[person_idx]
+            display_name = f"{contact.first_name} {contact.last_name}".strip()
+
+            all_identities.append({
+                'person_id': person_id,
+                'namespace': 'linkedin_name',
+                'value': display_name
+            })
 
             if contact.email:
-                identities_to_create.append({
+                all_identities.append({
                     'person_id': person_id,
                     'namespace': 'email',
                     'value': contact.email.lower()
                 })
 
-            for identity in identities_to_create:
-                try:
-                    supabase.table('identity').insert(identity).execute()
-                except Exception:
-                    pass  # Ignore duplicate identities
-
-            # Create assertions
-            assertions_to_create = []
-
             if contact.company:
-                assertions_to_create.append({
+                all_assertions.append({
                     'subject_person_id': person_id,
                     'predicate': 'works_at',
                     'object_value': contact.company,
@@ -403,7 +445,7 @@ async def import_linkedin_csv(
                 })
 
             if contact.position:
-                assertions_to_create.append({
+                all_assertions.append({
                     'subject_person_id': person_id,
                     'predicate': 'role_is',
                     'object_value': contact.position,
@@ -412,7 +454,7 @@ async def import_linkedin_csv(
                 })
 
             if contact.connected_on:
-                assertions_to_create.append({
+                all_assertions.append({
                     'subject_person_id': person_id,
                     'predicate': 'contact_context',
                     'object_value': f"Connected on LinkedIn: {contact.connected_on}",
@@ -420,90 +462,101 @@ async def import_linkedin_csv(
                     'scope': 'personal'
                 })
 
-            # Generate embeddings and insert assertions
-            for assertion in assertions_to_create:
-                try:
-                    text_for_embedding = f"{assertion['predicate']}: {assertion['object_value']}"
-                    embedding = generate_embedding(text_for_embedding)
-                    assertion['embedding'] = embedding
+        # Batch insert identities
+        print(f"[LINKEDIN IMPORT] Inserting {len(all_identities)} identities...")
+        for batch_start in range(0, len(all_identities), 100):
+            batch_chunk = all_identities[batch_start:batch_start + 100]
+            try:
+                supabase.table('identity').insert(batch_chunk).execute()
+            except Exception:
+                # Fallback for duplicates
+                for identity in batch_chunk:
+                    try:
+                        supabase.table('identity').insert(identity).execute()
+                    except Exception:
+                        pass
 
-                    supabase.table('assertion').insert(assertion).execute()
-                except Exception as e:
-                    print(f"[IMPORT] Failed to create assertion: {e}")
+        # PHASE 4: Generate embeddings in batch
+        update_status('extracting', content=f"Generating embeddings for {len(all_assertions)} facts...")
+        print(f"[LINKEDIN IMPORT] Generating embeddings for {len(all_assertions)} assertions...")
 
-            if is_new:
-                imported += 1
-                details.append({
-                    'name': display_name,
-                    'status': 'imported',
-                    'company': contact.company,
-                    'position': contact.position
-                })
-            else:
-                details.append({
-                    'name': display_name,
-                    'status': 'updated',
-                    'company': contact.company,
-                    'position': contact.position
-                })
+        if all_assertions:
+            texts = [f"{a['predicate']}: {a['object_value']}" for a in all_assertions]
+            all_embeddings = []
 
-    except Exception as e:
-        # Rollback all changes on any error
-        rollback_batch(batch_id, str(e))
-        raise HTTPException(status_code=500, detail=f"Import failed: {str(e)}")
+            for batch_start in range(0, len(texts), 2000):
+                batch_texts = texts[batch_start:batch_start + 2000]
+                batch_embeddings = generate_embeddings_batch(batch_texts)
+                all_embeddings.extend(batch_embeddings)
+                print(f"[LINKEDIN IMPORT] Embeddings: {len(all_embeddings)}/{len(texts)}")
 
-    # Update batch with final counts
-    supabase.table('import_batch').update({
-        'new_people': imported,
-        'updated_people': updated,
-        'duplicates_found': duplicates_found
-    }).eq('batch_id', batch_id).execute()
+            for i, assertion in enumerate(all_assertions):
+                assertion['embedding'] = all_embeddings[i]
 
-    # Run batch dedup to find potential duplicates with existing contacts
-    dedup_result = None
-    if imported > 0:
+        # PHASE 5: Batch insert assertions
+        update_status('extracting', content=f"Saving {len(all_assertions)} facts...")
+        print(f"[LINKEDIN IMPORT] Inserting {len(all_assertions)} assertions...")
+
+        for batch_start in range(0, len(all_assertions), 100):
+            batch_chunk = all_assertions[batch_start:batch_start + 100]
+            try:
+                supabase.table('assertion').insert(batch_chunk).execute()
+            except Exception as e:
+                print(f"[LINKEDIN IMPORT] Batch assertion insert failed: {e}")
+                for assertion in batch_chunk:
+                    try:
+                        supabase.table('assertion').insert(assertion).execute()
+                    except Exception:
+                        pass
+
+        # Update batch stats
+        supabase.table('import_batch').update({
+            'new_people': imported,
+            'updated_people': 0,
+            'duplicates_found': duplicates_found
+        }).eq('batch_id', batch_id).execute()
+
+        # Run dedup
+        dedup_result = None
+        if imported > 0:
+            try:
+                dedup_service = get_dedup_service()
+                dedup_result = await dedup_service.run_batch_dedup(
+                    owner_id=UUID(user_id),
+                    batch_id=batch_id
+                )
+            except Exception as e:
+                print(f"[LINKEDIN IMPORT] Dedup failed: {e}")
+
+        # Mark complete
+        supabase.table('raw_evidence').update({
+            'processed': True,
+            'processing_status': 'done',
+            'content': f"LinkedIn import complete: {imported} imported, {duplicates_found} duplicates, {skipped} skipped"
+        }).eq('evidence_id', evidence_id).execute()
+
+        # Send notification
         try:
-            dedup_service = get_dedup_service()
-            dedup_result = await dedup_service.run_batch_dedup(
-                owner_id=UUID(user_id),
-                batch_id=batch_id
+            proactive_service = get_proactive_service()
+            await proactive_service.send_import_report(
+                user_id=user_id,
+                import_type='linkedin',
+                batch_id=batch_id,
+                new_people=imported,
+                updated_people=0,
+                analytics=analytics,
+                dedup_result=dedup_result
             )
         except Exception as e:
-            print(f"[LINKEDIN IMPORT] Dedup failed: {e}")
-            dedup_result = {"error": str(e)}
+            print(f"[LINKEDIN IMPORT] Notification failed: {e}")
 
-    # Mark import as complete
-    supabase.table('raw_evidence').update({
-        'processed': True,
-        'processing_status': 'done'
-    }).eq('evidence_id', evidence_id).execute()
+        print(f"[LINKEDIN IMPORT] Complete: {imported} imported, {duplicates_found} duplicates, {skipped} skipped")
 
-    # Send Telegram notification
-    try:
-        proactive_service = get_proactive_service()
-        await proactive_service.send_import_report(
-            user_id=user_id,
-            import_type='linkedin',
-            batch_id=batch_id,
-            new_people=imported,
-            updated_people=updated,
-            analytics=analytics,
-            dedup_result=dedup_result
-        )
     except Exception as e:
-        print(f"[LINKEDIN IMPORT] Failed to send Telegram notification: {e}")
-
-    return ImportResult(
-        imported=imported,
-        skipped=skipped,
-        duplicates_found=duplicates_found,
-        updated=updated,
-        batch_id=batch_id,
-        evidence_id=evidence_id,
-        analytics=analytics,
-        details=details[:20],
-        dedup_result=dedup_result
-    )
+        print(f"[LINKEDIN IMPORT] Error: {e}")
+        import traceback
+        traceback.print_exc()
+        rollback_batch(str(e))
 
 
 @router.get("/linkedin/sample-csv")

@@ -383,57 +383,92 @@ async def execute_tool(tool_name: str, args: dict, user_id: str) -> str:
         name_pattern = args.get('name_pattern')
         print(f"[FIND_PEOPLE] query={query}, name_pattern={name_pattern}, limit={limit}")
 
-        # Semantic search (primary method)
+        # Hybrid search: name + semantic
         if query:
+            person_scores = {}  # person_id -> best_score (1.0 for name match, similarity for semantic)
+
+            # 1. Name search (exact/partial match gets high score)
+            name_result = supabase.table('person').select(
+                'person_id, display_name, import_source'
+            ).eq('owner_id', user_id).eq('status', 'active').ilike('display_name', f'%{query}%').limit(50).execute()
+
+            for p in name_result.data or []:
+                # Name matches get score 1.0 (highest priority)
+                person_scores[p['person_id']] = 1.0
+
+            print(f"[FIND_PEOPLE] Name search found {len(name_result.data or [])} people")
+
+            # 2. Semantic search by assertions
             query_embedding = generate_embedding(query)
             match_result = supabase.rpc(
                 'match_assertions_community',
                 {
                     'query_embedding': query_embedding,
-                    'match_threshold': 0.25,
-                    'match_count': limit * 3
+                    'match_threshold': 0.3,
+                    'match_count': 200
                 }
             ).execute()
 
-            if match_result.data:
-                # Get unique person_ids and fetch their details
-                person_ids = list(set(m['subject_person_id'] for m in match_result.data))
-                people_result = supabase.table('person').select(
-                    'person_id, display_name, import_source, owner_id'
-                ).in_('person_id', person_ids).eq('owner_id', user_id).eq('status', 'active').execute()
+            for m in match_result.data or []:
+                pid = m['subject_person_id']
+                sim = m.get('similarity', 0)
+                # Only update if not already found by name (name match = 1.0)
+                if pid not in person_scores or sim > person_scores[pid]:
+                    person_scores[pid] = sim
 
-                # Get email status
-                email_check = supabase.table('identity').select('person_id').in_(
-                    'person_id', person_ids
-                ).eq('namespace', 'email').execute()
-                has_email_ids = set(e['person_id'] for e in email_check.data or [])
+            print(f"[FIND_PEOPLE] After semantic: {len(person_scores)} total people")
 
-                # Apply name_pattern filter if provided
-                people_data = people_result.data or []
-                if name_pattern:
-                    try:
-                        pattern = re.compile(name_pattern, re.IGNORECASE)
-                        people_data = [p for p in people_data if pattern.search(p['display_name'] or '')]
-                    except re.error:
-                        pass  # Invalid regex, skip filtering
-
-                results = []
-                for p in people_data[:limit]:
-                    results.append({
-                        'person_id': p['person_id'],
-                        'name': p['display_name'],
-                        'import_source': p.get('import_source') or 'manual',
-                        'has_email': p['person_id'] in has_email_ids
-                    })
-
-                print(f"[FIND_PEOPLE] Semantic search found {len(results)} people")
-                return json.dumps({
-                    'people': results,
-                    'total': len(people_data),
-                    'showing': len(results)
-                }, ensure_ascii=False, indent=2)
-            else:
+            if not person_scores:
                 return json.dumps({'people': [], 'total': 0, 'message': 'No people match the query'}, ensure_ascii=False)
+
+            # Sort by score DESC and take top limit
+            sorted_people = sorted(person_scores.items(), key=lambda x: x[1], reverse=True)[:limit]
+            top_person_ids = [pid for pid, _ in sorted_people]
+
+            print(f"[FIND_PEOPLE] Top scores: {[(pid[:8], round(s, 3)) for pid, s in sorted_people[:5]]}")
+
+            # Fetch person details for those not already fetched
+            people_result = supabase.table('person').select(
+                'person_id, display_name, import_source, owner_id'
+            ).in_('person_id', top_person_ids).eq('owner_id', user_id).eq('status', 'active').execute()
+
+            # Get email status
+            email_check = supabase.table('identity').select('person_id').in_(
+                'person_id', top_person_ids
+            ).eq('namespace', 'email').execute()
+            has_email_ids = set(e['person_id'] for e in email_check.data or [])
+
+            # Build results preserving score order
+            people_by_id = {p['person_id']: p for p in people_result.data or []}
+
+            # Apply name_pattern filter if provided
+            if name_pattern:
+                try:
+                    pattern = re.compile(name_pattern, re.IGNORECASE)
+                    top_person_ids = [pid for pid in top_person_ids
+                                     if pid in people_by_id and pattern.search(people_by_id[pid]['display_name'] or '')]
+                except re.error:
+                    pass
+
+            results = []
+            for pid in top_person_ids:
+                if pid not in people_by_id:
+                    continue
+                p = people_by_id[pid]
+                results.append({
+                    'person_id': p['person_id'],
+                    'name': p['display_name'],
+                    'import_source': p.get('import_source') or 'manual',
+                    'has_email': p['person_id'] in has_email_ids,
+                    'relevance': round(person_scores[pid], 2)
+                })
+
+            print(f"[FIND_PEOPLE] Hybrid search found {len(results)} people")
+            return json.dumps({
+                'people': results,
+                'total': len(person_scores),
+                'showing': len(results)
+            }, ensure_ascii=False, indent=2)
 
         # Name pattern only (regex filter) - use SQL function
         if name_pattern:
