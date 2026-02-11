@@ -329,6 +329,38 @@ class EnrichmentService:
             "updated_at": datetime.utcnow().isoformat()
         }).eq("person_id", str(person_id)).execute()
 
+    def _safe_list(self, value) -> list:
+        """
+        Safely convert PDL field to list.
+
+        PDL API returns:
+        - list: actual data
+        - bool True: data exists but is hidden/requires credits
+        - bool False: no data available
+        - None: field not present
+
+        Returns empty list for non-list values.
+        """
+        if isinstance(value, list):
+            return value
+        return []
+
+    def _safe_str(self, value) -> str | None:
+        """
+        Safely get string value from PDL field.
+
+        PDL API returns:
+        - str: actual data
+        - bool True: data exists but is hidden
+        - bool False: no data available
+        - None: field not present
+
+        Returns None for non-string values.
+        """
+        if isinstance(value, str):
+            return value
+        return None
+
     async def _process_pdl_response(
         self,
         person_id: UUID,
@@ -337,70 +369,155 @@ class EnrichmentService:
         """
         Process PDL response and create assertions/identities.
 
+        PDL API quirks handled:
+        - Fields can be bool (true = exists but hidden, false = no data)
+        - Arrays can be empty [], bool, or actual data
+        - Nested objects may have bool fields too
+
         Returns (assertions_created, identities_created)
         """
         assertions_created = 0
         identities_created = 0
 
-        # Job title → role_is (check isinstance - PDL may return bool for hidden data)
-        job_title = data.get("job_title")
-        if job_title and isinstance(job_title, str):
+        # Job title → role_is
+        job_title = self._safe_str(data.get("job_title"))
+        if job_title:
             self._create_assertion(person_id, "role_is", job_title)
             assertions_created += 1
 
         # Company → works_at
-        company = data.get("job_company_name")
-        if company and isinstance(company, str):
+        company = self._safe_str(data.get("job_company_name"))
+        if company:
             self._create_assertion(person_id, "works_at", company)
             assertions_created += 1
 
-        # Location → located_in (PDL returns bool true/false when data exists but is hidden)
+        # Location → located_in
         location_parts = []
-        locality = data.get("location_locality")
-        country = data.get("location_country")
-        if locality and isinstance(locality, str):
+        locality = self._safe_str(data.get("location_locality"))
+        country = self._safe_str(data.get("location_country"))
+        if locality:
             location_parts.append(locality)
-        if country and isinstance(country, str):
+        if country:
             location_parts.append(country)
         if location_parts:
             self._create_assertion(person_id, "located_in", ", ".join(location_parts))
             assertions_created += 1
 
-        # Skills → strong_at
-        for skill in (data.get("skills") or [])[:5]:  # Limit to 5 skills
-            self._create_assertion(person_id, "strong_at", skill)
-            assertions_created += 1
+        # Skills → strong_at (PDL can return bool instead of array)
+        skills = self._safe_list(data.get("skills"))
+        for skill in skills[:5]:  # Limit to 5 skills
+            # Each skill should be a string, but defensive check
+            if isinstance(skill, str) and skill:
+                self._create_assertion(person_id, "strong_at", skill)
+                assertions_created += 1
 
         # LinkedIn → identity
-        if data.get("linkedin_url"):
-            if self._create_identity(person_id, "linkedin_url", data["linkedin_url"]):
+        linkedin_url = self._safe_str(data.get("linkedin_url"))
+        if linkedin_url:
+            if self._create_identity(person_id, "linkedin_url", linkedin_url):
                 identities_created += 1
 
-        # Email → identity (hashed) - check isinstance as PDL may return bools in array
-        for email in (data.get("emails") or [])[:3]:
-            if isinstance(email, dict) and email.get("address"):
-                email_hash = hashlib.sha256(email["address"].lower().encode()).hexdigest()
-                if self._create_identity(person_id, "email_hash", email_hash):
-                    identities_created += 1
+        # Email → identity (hashed)
+        # PDL "emails" can be: list of dicts, bool, or None
+        emails = self._safe_list(data.get("emails"))
+        for email in emails[:3]:
+            # Each email should be dict with "address" key
+            if isinstance(email, dict):
+                address = email.get("address")
+                if isinstance(address, str) and address:
+                    email_hash = hashlib.sha256(address.lower().encode()).hexdigest()
+                    if self._create_identity(person_id, "email_hash", email_hash):
+                        identities_created += 1
 
         # Industry → assertion
-        industry = data.get("industry")
-        if industry and isinstance(industry, str):
+        industry = self._safe_str(data.get("industry"))
+        if industry:
             self._create_assertion(person_id, "background", f"Industry: {industry}")
             assertions_created += 1
 
-        # Education → assertion - check isinstance as PDL may return bools in array
-        for edu in (data.get("education") or [])[:2]:
+        # Education → assertion
+        # PDL "education" can be: list of dicts, bool, or None
+        education = self._safe_list(data.get("education"))
+        for edu in education[:2]:
+            # Each edu should be dict with "school" object
             if not isinstance(edu, dict):
                 continue
+
             school = edu.get("school")
-            if isinstance(school, dict) and school.get("name"):
-                edu_text = school["name"]
-                degrees = edu.get("degrees")
-                if isinstance(degrees, list) and degrees:
-                    edu_text = f"{', '.join(str(d) for d in degrees if d)} from {edu_text}"
-                self._create_assertion(person_id, "background", f"Education: {edu_text}")
-                assertions_created += 1
+            if not isinstance(school, dict):
+                continue
+
+            school_name = self._safe_str(school.get("name"))
+            if not school_name:
+                continue
+
+            edu_text = school_name
+
+            # Degrees is also a list that could have non-string elements
+            degrees = self._safe_list(edu.get("degrees"))
+            # Filter to only strings and non-empty
+            valid_degrees = [d for d in degrees if isinstance(d, str) and d]
+            if valid_degrees:
+                edu_text = f"{', '.join(valid_degrees)} from {edu_text}"
+
+            self._create_assertion(person_id, "background", f"Education: {edu_text}")
+            assertions_created += 1
+
+        # Experience → additional assertions for past companies
+        experience = self._safe_list(data.get("experience"))
+        # Skip first (primary/current) as we already have job_company_name
+        for exp in experience[1:3]:  # Get 2 previous jobs
+            if not isinstance(exp, dict):
+                continue
+
+            company_data = exp.get("company")
+            if not isinstance(company_data, dict):
+                continue
+
+            company_name = self._safe_str(company_data.get("name"))
+            if not company_name:
+                continue
+
+            title_data = exp.get("title")
+            title_name = None
+            if isinstance(title_data, dict):
+                title_name = self._safe_str(title_data.get("name"))
+
+            if title_name:
+                exp_text = f"{title_name} at {company_name}"
+            else:
+                exp_text = f"Previously at {company_name}"
+
+            self._create_assertion(person_id, "background", exp_text)
+            assertions_created += 1
+
+        # Social profiles → identities
+        profiles = self._safe_list(data.get("profiles"))
+        for profile in profiles:
+            if not isinstance(profile, dict):
+                continue
+
+            network = self._safe_str(profile.get("network"))
+            url = self._safe_str(profile.get("url"))
+
+            if not network or not url:
+                continue
+
+            # Map network to our namespace
+            namespace_map = {
+                "linkedin": "linkedin_url",
+                "twitter": "twitter_url",
+                "facebook": "facebook_url",
+                "github": "github_url",
+            }
+
+            namespace = namespace_map.get(network)
+            if namespace and namespace != "linkedin_url":  # linkedin already handled above
+                # Ensure URL has protocol
+                if not url.startswith("http"):
+                    url = f"https://{url}"
+                if self._create_identity(person_id, namespace, url):
+                    identities_created += 1
 
         return assertions_created, identities_created
 
