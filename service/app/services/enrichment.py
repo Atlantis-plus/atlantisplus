@@ -208,12 +208,18 @@ class EnrichmentService:
             val = identity["value"]
 
             if ns == "linkedin_url":
-                params["profile"] = val
+                # Only use real profile URLs (contain /in/), skip search URLs
+                if "/in/" in val:
+                    params["profile"] = val
+                else:
+                    print(f"[ENRICHMENT] Skipping non-profile LinkedIn URL: {val}")
             elif ns == "email":
                 params["email"] = val
             elif ns == "email_hash":
                 # PDL doesn't support hashed emails, skip
                 continue
+
+        print(f"[ENRICHMENT] Params for PDL: {params}")
 
         # If no identities, try name-based lookup
         if not params:
