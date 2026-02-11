@@ -225,10 +225,56 @@ export const PeoplePage = () => {
     ['email', 'linkedin_url', 'telegram_username', 'phone'].includes(i.namespace)
   );
 
-  // Get name identities
+  // Get name identities (linkedin_name removed - no longer created by backend)
   const nameIdentities = identities.filter(i =>
-    ['linkedin_name', 'calendar_name', 'freeform_name'].includes(i.namespace)
+    ['calendar_name', 'freeform_name'].includes(i.namespace)
   );
+
+  // Helper to parse and format LinkedIn values
+  const formatLinkedInValue = (value: string): { href: string; label: string } => {
+    // Case 1: Profile URL - https://www.linkedin.com/in/john-smith/ or https://linkedin.com/in/john-smith
+    const profileMatch = value.match(/^https?:\/\/(?:www\.)?linkedin\.com\/in\/([^/?]+)/);
+    if (profileMatch) {
+      const slug = profileMatch[1].replace(/\/$/, ''); // Remove trailing slash
+      return { href: value, label: slug };
+    }
+
+    // Case 2: Search URL - https://www.linkedin.com/search/results/people/?keywords=John%20Smith
+    const searchMatch = value.match(/^https?:\/\/(?:www\.)?linkedin\.com\/search\/results\/people\/\?.*keywords=([^&]+)/);
+    if (searchMatch) {
+      let keywords: string;
+      try {
+        keywords = decodeURIComponent(searchMatch[1]).replace(/\+/g, ' ');
+      } catch {
+        // Fallback if malformed percent-encoding
+        keywords = searchMatch[1].replace(/\+/g, ' ');
+      }
+      return { href: value, label: `Search: ${keywords}` };
+    }
+
+    // Case 3: Any other LinkedIn URL (company pages, posts, etc.)
+    if (value.match(/^https?:\/\/(?:www\.)?linkedin\.com\//)) {
+      // Extract meaningful part after linkedin.com/
+      const pathMatch = value.match(/linkedin\.com\/(.+)/);
+      const path = pathMatch ? pathMatch[1].replace(/\/$/, '') : value;
+      return { href: value, label: path.length > 40 ? path.slice(0, 40) + '...' : path };
+    }
+
+    // Case 4: Just a username/slug without URL
+    if (!value.includes('://') && !value.includes(' ')) {
+      const cleanSlug = value.replace(/^@/, '').replace(/\/$/, '');
+      return {
+        href: `https://www.linkedin.com/in/${cleanSlug}`,
+        label: cleanSlug
+      };
+    }
+
+    // Fallback: treat as a name and create safe search URL (prevents XSS with javascript: protocol)
+    return {
+      href: `https://www.linkedin.com/search/results/people/?keywords=${encodeURIComponent(value)}`,
+      label: `Search: ${value}`
+    };
+  };
 
   const handleDelete = async () => {
     if (!selectedPerson) return;
@@ -343,9 +389,14 @@ export const PeoplePage = () => {
                       {identity.namespace === 'email' ? (
                         <a href={`mailto:${identity.value}`}>{identity.value}</a>
                       ) : identity.namespace === 'linkedin_url' ? (
-                        <a href={identity.value} target="_blank" rel="noopener noreferrer">
-                          {identity.value.replace('https://www.linkedin.com/in/', '')}
-                        </a>
+                        (() => {
+                          const { href, label } = formatLinkedInValue(identity.value);
+                          return (
+                            <a href={href} target="_blank" rel="noopener noreferrer">
+                              {label}
+                            </a>
+                          );
+                        })()
                       ) : identity.namespace === 'telegram_username' ? (
                         <a href={`https://t.me/${identity.value.replace('@', '')}`} target="_blank" rel="noopener noreferrer">
                           {identity.value}
@@ -371,8 +422,7 @@ export const PeoplePage = () => {
                   <span key={identity.identity_id} className="name-variant-tag">
                     {identity.value}
                     <span className="source-hint">
-                      {identity.namespace === 'linkedin_name' ? ' (LinkedIn)' :
-                       identity.namespace === 'calendar_name' ? ' (Calendar)' : ''}
+                      {identity.namespace === 'calendar_name' ? ' (Calendar)' : ''}
                     </span>
                   </span>
                 ))}

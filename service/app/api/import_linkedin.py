@@ -10,6 +10,7 @@ import csv
 import io
 from datetime import datetime
 from typing import Optional
+from urllib.parse import quote
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, BackgroundTasks
@@ -427,10 +428,12 @@ async def process_linkedin_import_background(
             person_id = created_person_ids[person_idx]
             display_name = f"{contact.first_name} {contact.last_name}".strip()
 
+            # Build LinkedIn search URL from name (safe='' ensures all special chars are encoded)
+            linkedin_search_url = f"https://www.linkedin.com/search/results/people/?keywords={quote(display_name, safe='')}"
             all_identities.append({
                 'person_id': person_id,
-                'namespace': 'linkedin_name',
-                'value': display_name
+                'namespace': 'linkedin_url',
+                'value': linkedin_search_url
             })
 
             if contact.email:
