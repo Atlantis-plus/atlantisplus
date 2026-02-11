@@ -37,6 +37,7 @@ class LinkedInContact(BaseModel):
     company: Optional[str] = None
     position: Optional[str] = None
     connected_on: Optional[str] = None
+    url: Optional[str] = None
 
 
 class ImportPreview(BaseModel):
@@ -110,6 +111,8 @@ def parse_linkedin_csv(content: str) -> list[LinkedInContact]:
                    row.get('Должность') or row.get('Job Title') or None)
         connected_on = (row.get('Connected On') or row.get('connected_on') or
                        row.get('Дата установления связи') or row.get('Connection Date') or None)
+        url = (row.get('URL') or row.get('url') or row.get('Profile URL') or
+               row.get('LinkedIn URL') or row.get('Ссылка') or row.get('Profile') or None)
 
         # Skip empty rows
         if not first_name and not last_name:
@@ -129,7 +132,8 @@ def parse_linkedin_csv(content: str) -> list[LinkedInContact]:
             email=email.strip() if email else None,
             company=company.strip() if company else None,
             position=position.strip() if position else None,
-            connected_on=connected_on.strip() if connected_on else None
+            connected_on=connected_on.strip() if connected_on else None,
+            url=url.strip() if url else None
         ))
 
     return contacts
@@ -428,12 +432,15 @@ async def process_linkedin_import_background(
             person_id = created_person_ids[person_idx]
             display_name = f"{contact.first_name} {contact.last_name}".strip()
 
-            # Build LinkedIn search URL from name (safe='' ensures all special chars are encoded)
-            linkedin_search_url = f"https://www.linkedin.com/search/results/people/?keywords={quote(display_name, safe='')}"
+            # Use real LinkedIn profile URL if available, otherwise fallback to search URL
+            if contact.url:
+                linkedin_url = contact.url
+            else:
+                linkedin_url = f"https://www.linkedin.com/search/results/people/?keywords={quote(display_name, safe='')}"
             all_identities.append({
                 'person_id': person_id,
                 'namespace': 'linkedin_url',
-                'value': linkedin_search_url
+                'value': linkedin_url
             })
 
             if contact.email:
