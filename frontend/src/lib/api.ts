@@ -341,6 +341,57 @@ class ApiClient {
 
     return response.json();
   }
+
+  // ============================================
+  // ENRICHMENT API
+  // ============================================
+
+  async getEnrichmentQuota(): Promise<EnrichmentQuotaResponse> {
+    return this.request('/enrich/quota');
+  }
+
+  async enrichPerson(personId: string): Promise<EnrichPersonResponse> {
+    return this.request(`/enrich/${personId}`, {
+      method: 'POST'
+    });
+  }
+
+  async getEnrichmentStatus(personId: string): Promise<EnrichmentStatusResponse> {
+    return this.request(`/enrich/status/${personId}`);
+  }
+}
+
+// ============================================
+// EXPORTED TYPES
+// ============================================
+
+export interface EnrichmentQuotaResponse {
+  daily_used: number;
+  daily_limit: number;
+  monthly_used: number;
+  monthly_limit: number;
+  can_enrich: boolean;
+  reason: string | null;
+}
+
+export interface EnrichPersonResponse {
+  success: boolean;
+  person_id: string;
+  assertions_created: number;
+  identities_created: number;
+  error: string | null;
+}
+
+export interface EnrichmentStatusResponse {
+  status: string;
+  last_enriched_at: string | null;
+  last_job: {
+    status: string;
+    created_at: string;
+    assertions_created?: number;
+    identities_created?: number;
+    error?: string;
+  } | null;
 }
 
 export const api = new ApiClient();

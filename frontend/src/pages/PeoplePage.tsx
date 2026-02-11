@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '../hooks/useAuth';
 import { supabase } from '../lib/supabase';
+import { api } from '../lib/api';
+import type { EnrichmentQuotaResponse, EnrichmentStatusResponse } from '../lib/api';
 
 interface Person {
   person_id: string;
@@ -40,6 +42,27 @@ export const PeoplePage = () => {
   const [activeTab, setActiveTab] = useState<TabType>('own');
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [deleting, setDeleting] = useState(false);
+
+  // Enrichment state
+  const [enrichmentQuota, setEnrichmentQuota] = useState<EnrichmentQuotaResponse | null>(null);
+  const [enrichmentStatus, setEnrichmentStatus] = useState<EnrichmentStatusResponse | null>(null);
+  const [enriching, setEnriching] = useState(false);
+  const [enrichmentResult, setEnrichmentResult] = useState<{
+    success: boolean;
+    assertions_created: number;
+    identities_created: number;
+    error: string | null;
+  } | null>(null);
+
+  // Helper to convert backend errors to user-friendly messages
+  const getUserFriendlyError = (error: string): string => {
+    if (error.includes('quota') || error.includes('limit')) return 'Daily enrichment limit reached. Try again tomorrow.';
+    if (error.includes('not found in external')) return 'No external data found for this person.';
+    if (error.includes('No identifiers')) return 'Add email or LinkedIn URL to enable enrichment.';
+    if (error.includes('Person not found')) return 'Person not found.';
+    if (error.includes('PDL API')) return 'External service temporarily unavailable.';
+    return 'Enrichment failed. Please try again later.';
+  };
 
   const currentUserId = session?.user?.id;
 
@@ -110,10 +133,67 @@ export const PeoplePage = () => {
     setSelectedPerson(person);
     setIdentities([]); // Reset identities
     setAssertions([]); // Reset assertions
+    setEnrichmentResult(null); // Reset enrichment result
+    setEnrichmentStatus(null); // Reset enrichment status
     await Promise.all([
       fetchAssertions(person.person_id),
-      fetchIdentities(person.person_id)
+      fetchIdentities(person.person_id),
+      fetchEnrichmentData(person.person_id)
     ]);
+  };
+
+  const fetchEnrichmentData = async (personId: string) => {
+    try {
+      // Fetch quota (always should succeed)
+      const quota = await api.getEnrichmentQuota();
+      setEnrichmentQuota(quota);
+
+      // Fetch status (may return 404 for never-enriched people, that's OK)
+      try {
+        const status = await api.getEnrichmentStatus(personId);
+        setEnrichmentStatus(status);
+      } catch (statusErr) {
+        // 404 or "not_found" is expected for new contacts - not an error
+        if (statusErr instanceof Error && (statusErr.message.includes('404') || statusErr.message.includes('not found'))) {
+          setEnrichmentStatus({ status: 'not_enriched', last_enriched_at: null, last_job: null });
+        } else {
+          console.error('Failed to fetch enrichment status:', statusErr);
+        }
+      }
+    } catch (err) {
+      console.error('Failed to fetch enrichment quota:', err);
+      // Non-critical, don't block the UI
+    }
+  };
+
+  const handleEnrich = async () => {
+    if (!selectedPerson || enriching) return;
+
+    setEnriching(true);
+    setEnrichmentResult(null);
+
+    try {
+      const result = await api.enrichPerson(selectedPerson.person_id);
+      setEnrichmentResult(result);
+
+      if (result.success) {
+        // Refresh person data to show new assertions and identities
+        await Promise.all([
+          fetchAssertions(selectedPerson.person_id),
+          fetchIdentities(selectedPerson.person_id),
+          fetchEnrichmentData(selectedPerson.person_id)
+        ]);
+      }
+    } catch (err) {
+      setEnrichmentResult({
+        success: false,
+        assertions_created: 0,
+        identities_created: 0,
+        error: err instanceof Error ? err.message : 'Unknown error'
+      });
+    } finally {
+      setEnriching(false);
+    }
   };
 
   const handleBack = () => {
@@ -121,6 +201,8 @@ export const PeoplePage = () => {
     setAssertions([]);
     setIdentities([]);
     setShowDeleteConfirm(false);
+    setEnrichmentResult(null);
+    setEnrichmentStatus(null);
   };
 
   // Helper to format namespace for display
@@ -295,6 +377,75 @@ export const PeoplePage = () => {
                   </span>
                 ))}
               </div>
+            </div>
+          )}
+
+          {/* Enrichment Section - only for own people */}
+          {isOwnPerson && (
+            <div className="enrichment-section">
+              <h3>External Data</h3>
+
+              {/* Enrichment Result Message */}
+              {enrichmentResult && (
+                <div className={`enrichment-result ${enrichmentResult.success ? 'success' : 'error'}`}>
+                  {enrichmentResult.success ? (
+                    <>
+                      Found {enrichmentResult.assertions_created} new facts
+                      {enrichmentResult.identities_created > 0 && ` and ${enrichmentResult.identities_created} contacts`}
+                    </>
+                  ) : (
+                    <>{getUserFriendlyError(enrichmentResult.error || 'Unknown error')}</>
+                  )}
+                </div>
+              )}
+
+              {/* Enrichment Status */}
+              {enrichmentStatus?.status === 'enriched' && !enrichmentResult && (
+                <div className="enrichment-status">
+                  Last enriched: {enrichmentStatus.last_enriched_at
+                    ? new Date(enrichmentStatus.last_enriched_at).toLocaleDateString()
+                    : 'Unknown'}
+                </div>
+              )}
+
+              {/* Quota Display */}
+              {enrichmentQuota && (
+                <div className="enrichment-quota">
+                  {enrichmentQuota.daily_used}/{enrichmentQuota.daily_limit} enrichments used today
+                </div>
+              )}
+
+              {/* Hint when no enrichable identifiers */}
+              {!contactIdentities.some(i => ['email', 'linkedin_url'].includes(i.namespace)) && (
+                <div className="enrichment-hint">
+                  💡 Add email or LinkedIn URL to get better enrichment results
+                </div>
+              )}
+
+              {/* Enrich Button */}
+              <button
+                className="enrich-btn"
+                onClick={handleEnrich}
+                disabled={enriching || !enrichmentQuota?.can_enrich}
+              >
+                {enriching ? (
+                  <>
+                    <span className="spinner-small"></span>
+                    Enriching...
+                  </>
+                ) : enrichmentStatus?.status === 'enriched' ? (
+                  'Re-enrich from external sources'
+                ) : (
+                  'Enrich from external sources'
+                )}
+              </button>
+
+              {/* Quota Exhausted Message */}
+              {enrichmentQuota && !enrichmentQuota.can_enrich && enrichmentQuota.reason && (
+                <div className="enrichment-limit-notice">
+                  {enrichmentQuota.reason}
+                </div>
+              )}
             </div>
           )}
 
