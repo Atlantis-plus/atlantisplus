@@ -342,22 +342,26 @@ class EnrichmentService:
         assertions_created = 0
         identities_created = 0
 
-        # Job title → role_is
-        if data.get("job_title"):
-            self._create_assertion(person_id, "role_is", data["job_title"])
+        # Job title → role_is (check isinstance - PDL may return bool for hidden data)
+        job_title = data.get("job_title")
+        if job_title and isinstance(job_title, str):
+            self._create_assertion(person_id, "role_is", job_title)
             assertions_created += 1
 
         # Company → works_at
-        if data.get("job_company_name"):
-            self._create_assertion(person_id, "works_at", data["job_company_name"])
+        company = data.get("job_company_name")
+        if company and isinstance(company, str):
+            self._create_assertion(person_id, "works_at", company)
             assertions_created += 1
 
-        # Location → located_in
+        # Location → located_in (PDL returns bool true/false when data exists but is hidden)
         location_parts = []
-        if data.get("location_locality"):
-            location_parts.append(data["location_locality"])
-        if data.get("location_country"):
-            location_parts.append(data["location_country"])
+        locality = data.get("location_locality")
+        country = data.get("location_country")
+        if locality and isinstance(locality, str):
+            location_parts.append(locality)
+        if country and isinstance(country, str):
+            location_parts.append(country)
         if location_parts:
             self._create_assertion(person_id, "located_in", ", ".join(location_parts))
             assertions_created += 1
@@ -380,8 +384,9 @@ class EnrichmentService:
                     identities_created += 1
 
         # Industry → assertion
-        if data.get("industry"):
-            self._create_assertion(person_id, "background", f"Industry: {data['industry']}")
+        industry = data.get("industry")
+        if industry and isinstance(industry, str):
+            self._create_assertion(person_id, "background", f"Industry: {industry}")
             assertions_created += 1
 
         # Education → assertion
