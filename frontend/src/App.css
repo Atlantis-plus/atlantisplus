@@ -1561,3 +1561,23 @@
   opacity: 1;
   color: #4caf50;
 }
+
+.progress-status {
+  font-size: 0.85rem;
+  color: var(--tg-theme-text-color, #333);
+  margin-bottom: 0.5rem;
+  font-weight: 500;
+}
+
+.progress-hint {
+  font-size: 0.75rem;
+  color: var(--tg-theme-hint-color, #666);
+  margin: 0;
+  font-style: italic;
+}
+
+.progress-stats {
+  font-size: 0.8rem;
+  color: var(--tg-theme-hint-color, #666);
+  margin-bottom: 0.75rem;
+}

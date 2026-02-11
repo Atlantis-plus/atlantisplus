@@ -212,32 +212,12 @@ class ApiClient {
     return response.json();
   }
 
+  // New response type for background import (202)
   async importLinkedIn(file: File, skipDuplicates: boolean = true): Promise<{
-    imported: number;
-    skipped: number;
-    duplicates_found: number;
-    updated: number;
-    batch_id: string;
     evidence_id: string;
-    analytics: {
-      by_year: Record<string, number>;
-      by_company: Record<string, number>;
-      with_email: number;
-      without_email: number;
-      total: number;
-    };
-    details: Array<{
-      name: string;
-      status: string;
-      reason?: string;
-      company?: string;
-      position?: string;
-    }>;
-    dedup_result: {
-      checked?: number;
-      duplicates_found?: number;
-      error?: string;
-    } | null;
+    batch_id: string;
+    total_contacts: number;
+    message: string;
   }> {
     const formData = new FormData();
     formData.append('file', file);

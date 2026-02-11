@@ -100,9 +100,16 @@ type ProcessingStatus = 'pending' | 'extracting' | 'done' | 'error';
 
 interface ImportProgress {
   evidenceId: string | null;
+  batchId: string | null;
+  totalContacts: number;
   status: ProcessingStatus;
+  content: string | null;  // Progress message from backend
   error: string | null;
 }
+
+// LocalStorage keys
+const LINKEDIN_IMPORT_KEY = 'atlantis_linkedin_import';
+const CALENDAR_IMPORT_KEY = 'atlantis_calendar_import';
 
 export const HomePage = ({ onNavigate }: HomePageProps) => {
   const { displayName, isAuthenticated, loading, error } = useAuth();
@@ -127,14 +134,95 @@ export const HomePage = ({ onNavigate }: HomePageProps) => {
   // Progress state for real-time updates
   const [linkedInProgress, setLinkedInProgress] = useState<ImportProgress>({
     evidenceId: null,
+    batchId: null,
+    totalContacts: 0,
     status: 'pending',
+    content: null,
     error: null
   });
   const [calendarProgress, setCalendarProgress] = useState<ImportProgress>({
     evidenceId: null,
+    batchId: null,
+    totalContacts: 0,
     status: 'pending',
+    content: null,
     error: null
   });
+
+  // Restore active import from localStorage on mount
+  useEffect(() => {
+    const restoreActiveImport = async () => {
+      const savedLinkedIn = localStorage.getItem(LINKEDIN_IMPORT_KEY);
+      if (savedLinkedIn) {
+        try {
+          const saved = JSON.parse(savedLinkedIn);
+          // Check current status in DB
+          const { data } = await supabase
+            .from('raw_evidence')
+            .select('processing_status, content, error_message')
+            .eq('evidence_id', saved.evidenceId)
+            .single();
+
+          if (data) {
+            if (data.processing_status === 'done' || data.processing_status === 'error') {
+              // Import finished, clear localStorage
+              localStorage.removeItem(LINKEDIN_IMPORT_KEY);
+              if (data.processing_status === 'done') {
+                // Could show a "completed" message
+              }
+            } else {
+              // Import still in progress, restore state
+              setLinkedInProgress({
+                evidenceId: saved.evidenceId,
+                batchId: saved.batchId,
+                totalContacts: saved.totalContacts,
+                status: data.processing_status,
+                content: data.content,
+                error: data.error_message
+              });
+              setLinkedInLoading(true);
+            }
+          }
+        } catch (e) {
+          localStorage.removeItem(LINKEDIN_IMPORT_KEY);
+        }
+      }
+
+      const savedCalendar = localStorage.getItem(CALENDAR_IMPORT_KEY);
+      if (savedCalendar) {
+        try {
+          const saved = JSON.parse(savedCalendar);
+          const { data } = await supabase
+            .from('raw_evidence')
+            .select('processing_status, content, error_message')
+            .eq('evidence_id', saved.evidenceId)
+            .single();
+
+          if (data) {
+            if (data.processing_status === 'done' || data.processing_status === 'error') {
+              localStorage.removeItem(CALENDAR_IMPORT_KEY);
+            } else {
+              setCalendarProgress({
+                evidenceId: saved.evidenceId,
+                batchId: saved.batchId,
+                totalContacts: saved.totalContacts,
+                status: data.processing_status,
+                content: data.content,
+                error: data.error_message
+              });
+              setCalendarLoading(true);
+            }
+          }
+        } catch (e) {
+          localStorage.removeItem(CALENDAR_IMPORT_KEY);
+        }
+      }
+    };
+
+    if (isAuthenticated) {
+      restoreActiveImport();
+    }
+  }, [isAuthenticated]);
 
   // Subscribe to real-time progress updates
   useEffect(() => {
@@ -154,9 +242,10 @@ export const HomePage = ({ onNavigate }: HomePageProps) => {
           filter: `evidence_id=in.(${evidenceIds.join(',')})`
         },
         (payload) => {
-          const { evidence_id, processing_status, error_message } = payload.new as {
+          const { evidence_id, processing_status, content, error_message } = payload.new as {
             evidence_id: string;
             processing_status: ProcessingStatus;
+            content: string;
             error_message: string | null;
           };
 
@@ -164,15 +253,41 @@ export const HomePage = ({ onNavigate }: HomePageProps) => {
             setLinkedInProgress(prev => ({
               ...prev,
               status: processing_status,
+              content: content,
               error: error_message
             }));
+
+            // If done or error, clear localStorage and loading
+            if (processing_status === 'done' || processing_status === 'error') {
+              localStorage.removeItem(LINKEDIN_IMPORT_KEY);
+              setLinkedInLoading(false);
+              if (processing_status === 'done') {
+                // Parse result from content if available
+                setLinkedInResult({
+                  imported: 0, // Will be updated from content parsing
+                  skipped: 0,
+                  duplicates_found: 0,
+                  updated: 0,
+                  batch_id: linkedInProgress.batchId || '',
+                  evidence_id: evidence_id,
+                  analytics: { by_year: {}, by_company: {}, with_email: 0, without_email: 0, total: linkedInProgress.totalContacts },
+                  dedup_result: null
+                });
+              }
+            }
           }
           if (evidence_id === calendarProgress.evidenceId) {
             setCalendarProgress(prev => ({
               ...prev,
               status: processing_status,
+              content: content,
               error: error_message
             }));
+
+            if (processing_status === 'done' || processing_status === 'error') {
+              localStorage.removeItem(CALENDAR_IMPORT_KEY);
+              setCalendarLoading(false);
+            }
           }
         }
       )
@@ -211,16 +326,36 @@ export const HomePage = ({ onNavigate }: HomePageProps) => {
     setLinkedInError(null);
 
     try {
-      const result = await api.importLinkedIn(linkedInFile, true);
-      setLinkedInResult(result);
+      // API now returns 202 immediately with tracking info
+      const startResult = await api.importLinkedIn(linkedInFile, true);
+
+      // Save to localStorage for recovery after reload
+      localStorage.setItem(LINKEDIN_IMPORT_KEY, JSON.stringify({
+        evidenceId: startResult.evidence_id,
+        batchId: startResult.batch_id,
+        totalContacts: startResult.total_contacts
+      }));
+
+      // Set progress state to enable Realtime subscription
+      setLinkedInProgress({
+        evidenceId: startResult.evidence_id,
+        batchId: startResult.batch_id,
+        totalContacts: startResult.total_contacts,
+        status: 'pending',
+        content: startResult.message,
+        error: null
+      });
+
+      // Clear file selection (but keep loading until done via Realtime)
       setLinkedInPreview(null);
       setLinkedInFile(null);
       if (linkedInFileRef.current) {
         linkedInFileRef.current.value = '';
       }
+
+      // Note: setLinkedInLoading(false) will be called by Realtime when status='done'
     } catch (err) {
       setLinkedInError(err instanceof Error ? err.message : 'Import failed');
-    } finally {
       setLinkedInLoading(false);
     }
   };
@@ -230,6 +365,16 @@ export const HomePage = ({ onNavigate }: HomePageProps) => {
     setLinkedInPreview(null);
     setLinkedInResult(null);
     setLinkedInError(null);
+    setLinkedInLoading(false);
+    setLinkedInProgress({
+      evidenceId: null,
+      batchId: null,
+      totalContacts: 0,
+      status: 'pending',
+      content: null,
+      error: null
+    });
+    localStorage.removeItem(LINKEDIN_IMPORT_KEY);
     if (linkedInFileRef.current) {
       linkedInFileRef.current.value = '';
     }
@@ -345,7 +490,29 @@ export const HomePage = ({ onNavigate }: HomePageProps) => {
                 </ol>
               </div>
 
-              {!linkedInPreview && !linkedInResult && (
+              {/* Show progress when background import is running */}
+              {linkedInProgress.evidenceId && linkedInLoading && (
+                <div className="progress-section">
+                  <h3>Import in Progress</h3>
+                  <div className="progress-stats">
+                    <span>{linkedInProgress.totalContacts} contacts</span>
+                  </div>
+                  <div className="progress-bar">
+                    <div className="progress-fill progress-animated"></div>
+                  </div>
+                  <div className="progress-status">
+                    {linkedInProgress.content || 'Processing...'}
+                  </div>
+                  <p className="progress-hint">
+                    You can close this page. Import continues in background.
+                  </p>
+                  {linkedInProgress.error && (
+                    <div className="error-message">{linkedInProgress.error}</div>
+                  )}
+                </div>
+              )}
+
+              {!linkedInPreview && !linkedInResult && !linkedInProgress.evidenceId && (
                 <div className="file-upload">
                   <input
                     ref={linkedInFileRef}
@@ -418,12 +585,12 @@ export const HomePage = ({ onNavigate }: HomePageProps) => {
                       <div className="progress-bar">
                         <div className="progress-fill progress-animated"></div>
                       </div>
-                      <div className="progress-steps">
-                        <span className="step active">Uploading</span>
-                        <span className="step">Processing</span>
-                        <span className="step">Creating contacts</span>
-                        <span className="step">Finding duplicates</span>
+                      <div className="progress-status">
+                        {linkedInProgress.content || 'Starting import...'}
                       </div>
+                      <p className="progress-hint">
+                        You can close this page. Import continues in background.
+                      </p>
                     </div>
                   )}
                 </div>
