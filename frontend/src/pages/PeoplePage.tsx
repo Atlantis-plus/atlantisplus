@@ -51,16 +51,35 @@ export const PeoplePage = () => {
 
   const fetchPeople = async () => {
     setLoading(true);
-    const { data, error } = await supabase
-      .from('person')
-      .select('person_id, display_name, summary, created_at, owner_id')
-      .eq('status', 'active')
-      .order('created_at', { ascending: false })
-      .limit(5000);  // Override Supabase default limit of 1000
 
-    if (!error && data) {
-      setPeople(data);
+    // PostgREST has a server-side max_rows limit (default 1000)
+    // We need to paginate to get all records
+    const PAGE_SIZE = 1000;
+    let allPeople: Person[] = [];
+    let page = 0;
+    let hasMore = true;
+
+    while (hasMore) {
+      const from = page * PAGE_SIZE;
+      const to = from + PAGE_SIZE - 1;
+
+      const { data, error } = await supabase
+        .from('person')
+        .select('person_id, display_name, summary, created_at, owner_id')
+        .eq('status', 'active')
+        .order('created_at', { ascending: false })
+        .range(from, to);
+
+      if (error || !data) {
+        break;
+      }
+
+      allPeople = [...allPeople, ...data];
+      hasMore = data.length === PAGE_SIZE;
+      page++;
     }
+
+    setPeople(allPeople);
     setLoading(false);
   };
 
