@@ -268,9 +268,12 @@ class EnrichmentService:
                     error="Person not found in external database"
                 )
 
-            # Process PDL response
+            # Process PDL response - extract nested "data" object
+            pdl_person_data = pdl_data.get("data", pdl_data)
+            print(f"[ENRICHMENT] PDL returned data keys: {list(pdl_person_data.keys())[:10]}")
+
             assertions_created, identities_created = await self._process_pdl_response(
-                person_id, pdl_data
+                person_id, pdl_person_data
             )
 
             # Increment quota
