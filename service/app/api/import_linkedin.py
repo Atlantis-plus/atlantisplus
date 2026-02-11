@@ -491,6 +491,9 @@ async def process_linkedin_import_background(
                     except Exception:
                         pass
 
+            progress = min(batch_start + 100, len(all_identities))
+            update_status('extracting', content=f"Adding {progress}/{len(all_identities)} identities...")
+
         # PHASE 4: Generate embeddings in batch
         update_status('extracting', content=f"Generating embeddings for {len(all_assertions)} facts...")
         print(f"[LINKEDIN IMPORT] Generating embeddings for {len(all_assertions)} assertions...")
@@ -504,6 +507,7 @@ async def process_linkedin_import_background(
                 batch_embeddings = generate_embeddings_batch(batch_texts)
                 all_embeddings.extend(batch_embeddings)
                 print(f"[LINKEDIN IMPORT] Embeddings: {len(all_embeddings)}/{len(texts)}")
+                update_status('extracting', content=f"Generating embeddings: {len(all_embeddings)}/{len(texts)}")
 
             for i, assertion in enumerate(all_assertions):
                 assertion['embedding'] = all_embeddings[i]
@@ -523,6 +527,9 @@ async def process_linkedin_import_background(
                         supabase.table('assertion').insert(assertion).execute()
                     except Exception:
                         pass
+
+            progress = min(batch_start + 100, len(all_assertions))
+            update_status('extracting', content=f"Saving {progress}/{len(all_assertions)} facts...")
 
         # Update batch stats
         supabase.table('import_batch').update({
