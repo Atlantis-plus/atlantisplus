@@ -5,7 +5,13 @@ Given a text (transcript of voice note or written note), extract:
 
 1. PEOPLE mentioned:
    - name (as mentioned, preserve original language)
-   - identifying details (company, role, city, etc.)
+   - identifiers (CRITICAL - extract into the identifiers object, NOT as assertions!):
+     * telegram: username starting with @ (e.g., "@dzaruta" → "dzaruta")
+     * email: email addresses (e.g., "john@example.com")
+     * linkedin: LinkedIn URL or profile slug
+     * company: current company
+     * role: current job title
+     * city: current location
 
 2. FACTS (assertions) about each person:
 
@@ -72,13 +78,15 @@ EXTRACTION_OUTPUT_SCHEMA = {
                     "name_variations": {"type": "array", "items": {"type": "string"}, "description": "Other name forms used"},
                     "identifiers": {
                         "type": "object",
+                        "description": "Contact info and identifiers - extract here, NOT as assertions!",
                         "properties": {
-                            "company": {"type": "string"},
-                            "role": {"type": "string"},
-                            "city": {"type": "string"},
-                            "linkedin": {"type": "string"},
-                            "telegram": {"type": "string"},
-                            "email": {"type": "string"}
+                            "company": {"type": "string", "description": "Current company name"},
+                            "role": {"type": "string", "description": "Current job title"},
+                            "city": {"type": "string", "description": "Current city/location"},
+                            "telegram": {"type": "string", "description": "Telegram username WITHOUT @ (e.g., 'dzaruta')"},
+                            "email": {"type": "string", "description": "Email address"},
+                            "linkedin": {"type": "string", "description": "LinkedIn URL or username"},
+                            "phone": {"type": "string", "description": "Phone number"}
                         }
                     }
                 },

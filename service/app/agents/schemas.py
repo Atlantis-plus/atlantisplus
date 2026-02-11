@@ -9,6 +9,7 @@ class PersonIdentifiers(BaseModel):
     linkedin: Optional[str] = None
     telegram: Optional[str] = None
     email: Optional[str] = None
+    phone: Optional[str] = None
 
 
 class ExtractedPerson(BaseModel):

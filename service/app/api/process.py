@@ -73,18 +73,22 @@ async def process_pipeline(
                         "value": variation
                     })
 
-            # Add identifiers
+            # Add identifiers (with normalization)
             if person.identifiers.telegram:
-                identities.append({
-                    "person_id": person_id,
-                    "namespace": "telegram_username",
-                    "value": person.identifiers.telegram
-                })
+                # Strip @ prefix if present
+                tg_value = person.identifiers.telegram.lstrip('@')
+                if tg_value:
+                    identities.append({
+                        "person_id": person_id,
+                        "namespace": "telegram_username",
+                        "value": tg_value
+                    })
             if person.identifiers.email:
+                # Normalize to lowercase for consistent dedup
                 identities.append({
                     "person_id": person_id,
-                    "namespace": "email_hash",
-                    "value": person.identifiers.email
+                    "namespace": "email",  # Consistent with import_linkedin.py
+                    "value": person.identifiers.email.lower()
                 })
             if person.identifiers.linkedin:
                 identities.append({
@@ -92,6 +96,18 @@ async def process_pipeline(
                     "namespace": "linkedin_url",
                     "value": person.identifiers.linkedin
                 })
+            if person.identifiers.phone:
+                # Basic phone normalization: keep only digits and leading +
+                phone_value = person.identifiers.phone
+                if phone_value:
+                    # Remove common formatting chars but keep + for international
+                    normalized = ''.join(c for c in phone_value if c.isdigit() or c == '+')
+                    if normalized:
+                        identities.append({
+                            "person_id": person_id,
+                            "namespace": "phone",
+                            "value": normalized
+                        })
 
             # Insert identities (ignore conflicts on unique constraint)
             for identity in identities:
