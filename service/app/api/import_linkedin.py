@@ -25,6 +25,9 @@ from app.services.import_analytics import calculate_linkedin_analytics
 
 router = APIRouter(prefix="/import", tags=["import"])
 
+# Keep references to background tasks to prevent garbage collection
+_background_tasks: set = set()
+
 
 class LinkedInContact(BaseModel):
     first_name: str
@@ -285,8 +288,8 @@ async def import_linkedin_csv(
     }).execute()
     evidence_id = evidence_result.data[0]['evidence_id']
 
-    # Start background processing
-    asyncio.create_task(
+    # Start background processing (keep reference to prevent GC)
+    task = asyncio.create_task(
         process_linkedin_import_background(
             user_id=user_id,
             batch_id=batch_id,
@@ -296,6 +299,8 @@ async def import_linkedin_csv(
             analytics=analytics
         )
     )
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
 
     return ImportStartResponse(
         evidence_id=evidence_id,

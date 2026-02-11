@@ -55,7 +55,8 @@ export const PeoplePage = () => {
       .from('person')
       .select('person_id, display_name, summary, created_at, owner_id')
       .eq('status', 'active')
-      .order('created_at', { ascending: false });
+      .order('created_at', { ascending: false })
+      .limit(5000);  // Override Supabase default limit of 1000
 
     if (!error && data) {
       setPeople(data);
