@@ -1,0 +1,1891 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Atlantis Plus - AI-first Personal Network Memory</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-primary: #0a0f1a;
+            --bg-secondary: #0f1729;
+            --bg-card: #141c2f;
+            --accent-teal: #00d4aa;
+            --accent-purple: #8b5cf6;
+            --accent-blue: #3b82f6;
+            --text-primary: #ffffff;
+            --text-secondary: #94a3b8;
+            --text-muted: #64748b;
+            --gradient-1: linear-gradient(135deg, #00d4aa 0%, #8b5cf6 100%);
+            --gradient-2: linear-gradient(135deg, #8b5cf6 0%, #3b82f6 100%);
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            overflow: hidden;
+            height: 100vh;
+            width: 100vw;
+        }
+
+        /* Animated Network Background */
+        .network-bg {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 0;
+            opacity: 0.15;
+            pointer-events: none;
+        }
+
+        .network-bg canvas {
+            width: 100%;
+            height: 100%;
+        }
+
+        /* Presentation Container */
+        .presentation {
+            position: relative;
+            z-index: 1;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+        }
+
+        .slides-container {
+            display: flex;
+            height: 100%;
+            transition: transform 0.6s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        .slide {
+            min-width: 100%;
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            padding: 60px 80px;
+            position: relative;
+        }
+
+        /* Navigation */
+        .nav-dots {
+            position: fixed;
+            right: 30px;
+            top: 50%;
+            transform: translateY(-50%);
+            z-index: 100;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+
+        .nav-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background: var(--text-muted);
+            cursor: pointer;
+            transition: all 0.3s ease;
+            border: none;
+            padding: 0;
+        }
+
+        .nav-dot:hover {
+            background: var(--text-secondary);
+            transform: scale(1.3);
+        }
+
+        .nav-dot.active {
+            background: var(--accent-teal);
+            box-shadow: 0 0 12px var(--accent-teal);
+        }
+
+        .nav-dot.section-start {
+            width: 12px;
+            height: 12px;
+        }
+
+        .slide-counter {
+            position: fixed;
+            bottom: 30px;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 100;
+            font-size: 14px;
+            color: var(--text-muted);
+            font-weight: 500;
+        }
+
+        .nav-arrows {
+            position: fixed;
+            bottom: 30px;
+            right: 30px;
+            z-index: 100;
+            display: flex;
+            gap: 10px;
+        }
+
+        .nav-arrow {
+            width: 40px;
+            height: 40px;
+            border: 1px solid var(--text-muted);
+            border-radius: 8px;
+            background: rgba(255, 255, 255, 0.05);
+            color: var(--text-secondary);
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.3s ease;
+            font-size: 18px;
+        }
+
+        .nav-arrow:hover {
+            border-color: var(--accent-teal);
+            color: var(--accent-teal);
+            background: rgba(0, 212, 170, 0.1);
+        }
+
+        .nav-arrow:disabled {
+            opacity: 0.3;
+            cursor: not-allowed;
+        }
+
+        /* Section Labels */
+        .section-label {
+            position: absolute;
+            top: 30px;
+            left: 80px;
+            font-size: 12px;
+            font-weight: 600;
+            letter-spacing: 2px;
+            text-transform: uppercase;
+            color: var(--accent-teal);
+            opacity: 0.8;
+        }
+
+        /* Typography */
+        h1 {
+            font-family: 'Space Grotesk', sans-serif;
+            font-size: 72px;
+            font-weight: 700;
+            line-height: 1.1;
+            margin-bottom: 20px;
+            background: var(--gradient-1);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        h2 {
+            font-family: 'Space Grotesk', sans-serif;
+            font-size: 48px;
+            font-weight: 600;
+            line-height: 1.2;
+            margin-bottom: 40px;
+        }
+
+        h3 {
+            font-size: 28px;
+            font-weight: 600;
+            margin-bottom: 20px;
+            color: var(--accent-teal);
+        }
+
+        p {
+            font-size: 20px;
+            line-height: 1.6;
+            color: var(--text-secondary);
+            max-width: 800px;
+        }
+
+        .subtitle {
+            font-size: 24px;
+            color: var(--text-secondary);
+            font-weight: 400;
+        }
+
+        .tagline {
+            font-size: 18px;
+            color: var(--text-muted);
+            margin-top: 30px;
+        }
+
+        /* Slide Specific Styles */
+        .slide-title {
+            text-align: center;
+        }
+
+        .slide-title .logo {
+            font-size: 20px;
+            letter-spacing: 4px;
+            text-transform: uppercase;
+            color: var(--text-muted);
+            margin-bottom: 40px;
+        }
+
+        .slide-title .brain-network {
+            width: 200px;
+            height: 200px;
+            margin-bottom: 40px;
+            position: relative;
+        }
+
+        /* Content Layouts */
+        .content-split {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 80px;
+            width: 100%;
+            max-width: 1400px;
+            align-items: center;
+        }
+
+        .content-center {
+            text-align: center;
+            max-width: 900px;
+        }
+
+        .content-full {
+            width: 100%;
+            max-width: 1200px;
+        }
+
+        /* Pain Points List */
+        .pain-list {
+            list-style: none;
+            display: flex;
+            flex-direction: column;
+            gap: 24px;
+        }
+
+        .pain-list li {
+            display: flex;
+            align-items: flex-start;
+            gap: 16px;
+            font-size: 20px;
+            color: var(--text-secondary);
+        }
+
+        .pain-list li::before {
+            content: "X";
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            width: 28px;
+            height: 28px;
+            background: rgba(239, 68, 68, 0.2);
+            color: #ef4444;
+            border-radius: 6px;
+            font-weight: 700;
+            font-size: 14px;
+            flex-shrink: 0;
+        }
+
+        .solution-list li::before {
+            content: "";
+            background: rgba(0, 212, 170, 0.2);
+            color: var(--accent-teal);
+        }
+
+        /* Cards Grid */
+        .cards-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 24px;
+            width: 100%;
+            max-width: 1200px;
+        }
+
+        .card {
+            background: var(--bg-card);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            border-radius: 16px;
+            padding: 32px;
+            transition: all 0.3s ease;
+            cursor: default;
+        }
+
+        .card:hover {
+            border-color: var(--accent-teal);
+            transform: translateY(-4px);
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.3);
+        }
+
+        .card-icon {
+            width: 48px;
+            height: 48px;
+            background: var(--gradient-1);
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 24px;
+            margin-bottom: 20px;
+        }
+
+        .card h4 {
+            font-size: 18px;
+            font-weight: 600;
+            margin-bottom: 12px;
+        }
+
+        .card p {
+            font-size: 14px;
+            color: var(--text-muted);
+        }
+
+        /* Flip Cards */
+        .flip-cards {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 24px;
+            width: 100%;
+            max-width: 1200px;
+        }
+
+        .flip-card {
+            height: 200px;
+            perspective: 1000px;
+            cursor: pointer;
+        }
+
+        .flip-card-inner {
+            position: relative;
+            width: 100%;
+            height: 100%;
+            transition: transform 0.6s;
+            transform-style: preserve-3d;
+        }
+
+        .flip-card:hover .flip-card-inner {
+            transform: rotateY(180deg);
+        }
+
+        .flip-card-front, .flip-card-back {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            backface-visibility: hidden;
+            border-radius: 16px;
+            padding: 24px;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            text-align: center;
+        }
+
+        .flip-card-front {
+            background: var(--bg-card);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+        }
+
+        .flip-card-back {
+            background: linear-gradient(135deg, var(--bg-card) 0%, rgba(0, 212, 170, 0.1) 100%);
+            border: 1px solid var(--accent-teal);
+            transform: rotateY(180deg);
+        }
+
+        .flip-card-front h4 {
+            font-size: 20px;
+            margin-bottom: 8px;
+        }
+
+        .flip-card-front .icon {
+            font-size: 36px;
+            margin-bottom: 16px;
+        }
+
+        .flip-card-back p {
+            font-size: 14px;
+            color: var(--text-secondary);
+        }
+
+        /* Layered Diagram */
+        .layers-diagram {
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+            width: 100%;
+            max-width: 600px;
+        }
+
+        .layer {
+            display: flex;
+            align-items: center;
+            gap: 24px;
+            padding: 24px 32px;
+            background: var(--bg-card);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            border-radius: 12px;
+            transition: all 0.3s ease;
+            opacity: 0;
+            transform: translateX(-30px);
+        }
+
+        .layer.visible {
+            opacity: 1;
+            transform: translateX(0);
+        }
+
+        .layer:nth-child(1) { transition-delay: 0.1s; }
+        .layer:nth-child(2) { transition-delay: 0.2s; }
+        .layer:nth-child(3) { transition-delay: 0.3s; }
+        .layer:nth-child(4) { transition-delay: 0.4s; }
+
+        .layer-number {
+            width: 40px;
+            height: 40px;
+            background: var(--gradient-1);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 700;
+            font-size: 18px;
+            flex-shrink: 0;
+        }
+
+        .layer-content h4 {
+            font-size: 18px;
+            font-weight: 600;
+            margin-bottom: 4px;
+        }
+
+        .layer-content p {
+            font-size: 14px;
+            color: var(--text-muted);
+        }
+
+        /* Visual Containers */
+        .visual-container {
+            position: relative;
+            width: 100%;
+            height: 300px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .chaos-visual, .organized-visual {
+            width: 200px;
+            height: 200px;
+            position: relative;
+        }
+
+        /* Comparison */
+        .comparison {
+            display: flex;
+            align-items: center;
+            gap: 60px;
+        }
+
+        .comparison-item {
+            text-align: center;
+        }
+
+        .comparison-item h4 {
+            margin-top: 20px;
+            font-size: 16px;
+            color: var(--text-muted);
+        }
+
+        .vs {
+            font-size: 24px;
+            font-weight: 700;
+            color: var(--text-muted);
+        }
+
+        /* Magic Moments */
+        .magic-list {
+            list-style: none;
+            display: flex;
+            flex-direction: column;
+            gap: 32px;
+        }
+
+        .magic-list li {
+            display: flex;
+            align-items: flex-start;
+            gap: 20px;
+        }
+
+        .magic-icon {
+            width: 48px;
+            height: 48px;
+            background: var(--gradient-1);
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 24px;
+            flex-shrink: 0;
+        }
+
+        .magic-content h4 {
+            font-size: 20px;
+            font-weight: 600;
+            margin-bottom: 8px;
+        }
+
+        .magic-content p {
+            font-size: 16px;
+            color: var(--text-muted);
+        }
+
+        /* Typing Animation */
+        .typing-demo {
+            background: var(--bg-card);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 12px;
+            padding: 24px 32px;
+            font-family: 'SF Mono', 'Fira Code', monospace;
+            font-size: 18px;
+            color: var(--accent-teal);
+            margin-top: 40px;
+            max-width: 600px;
+        }
+
+        .typing-cursor {
+            display: inline-block;
+            width: 2px;
+            height: 24px;
+            background: var(--accent-teal);
+            margin-left: 4px;
+            animation: blink 1s infinite;
+            vertical-align: middle;
+        }
+
+        @keyframes blink {
+            0%, 50% { opacity: 1; }
+            51%, 100% { opacity: 0; }
+        }
+
+        /* Screenshot Placeholders */
+        .screenshots-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 24px;
+            width: 100%;
+            max-width: 1000px;
+        }
+
+        .screenshot {
+            background: var(--bg-card);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            border-radius: 12px;
+            padding: 20px;
+            text-align: center;
+        }
+
+        .screenshot-placeholder {
+            width: 100%;
+            height: 180px;
+            background: linear-gradient(135deg, var(--bg-secondary) 0%, var(--bg-card) 100%);
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin-bottom: 16px;
+            font-size: 48px;
+            color: var(--text-muted);
+        }
+
+        .screenshot h4 {
+            font-size: 16px;
+            font-weight: 600;
+        }
+
+        /* Import Sources */
+        .import-flow {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 40px;
+        }
+
+        .import-source {
+            width: 120px;
+            height: 120px;
+            background: var(--bg-card);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            border-radius: 16px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 12px;
+            font-size: 14px;
+            color: var(--text-secondary);
+        }
+
+        .import-source .icon {
+            font-size: 36px;
+        }
+
+        .import-arrow {
+            font-size: 32px;
+            color: var(--accent-teal);
+        }
+
+        .import-target {
+            width: 160px;
+            height: 160px;
+            background: linear-gradient(135deg, var(--bg-card) 0%, rgba(0, 212, 170, 0.1) 100%);
+            border: 2px solid var(--accent-teal);
+            border-radius: 50%;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+        }
+
+        .import-target .icon {
+            font-size: 48px;
+            color: var(--accent-teal);
+        }
+
+        /* QR Code */
+        .qr-container {
+            background: white;
+            padding: 24px;
+            border-radius: 16px;
+            margin: 30px 0;
+        }
+
+        .qr-code {
+            width: 200px;
+            height: 200px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .qr-code svg {
+            width: 100%;
+            height: 100%;
+        }
+
+        /* Demo Bullets */
+        .demo-bullets {
+            list-style: none;
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+            margin-top: 30px;
+        }
+
+        .demo-bullets li {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+            font-size: 18px;
+            color: var(--text-secondary);
+        }
+
+        .demo-bullets li::before {
+            content: "";
+            width: 8px;
+            height: 8px;
+            background: var(--accent-teal);
+            border-radius: 50%;
+            flex-shrink: 0;
+        }
+
+        /* Roadmap */
+        .roadmap {
+            display: flex;
+            gap: 40px;
+            width: 100%;
+            max-width: 1200px;
+        }
+
+        .roadmap-phase {
+            flex: 1;
+            position: relative;
+            padding-left: 24px;
+        }
+
+        .roadmap-phase::before {
+            content: "";
+            position: absolute;
+            left: 0;
+            top: 0;
+            bottom: 0;
+            width: 4px;
+            background: var(--bg-card);
+            border-radius: 2px;
+        }
+
+        .roadmap-phase.active::before {
+            background: var(--gradient-1);
+        }
+
+        .roadmap-phase h4 {
+            font-size: 14px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            color: var(--text-muted);
+            margin-bottom: 12px;
+        }
+
+        .roadmap-phase.active h4 {
+            color: var(--accent-teal);
+        }
+
+        .roadmap-phase h3 {
+            font-size: 20px;
+            margin-bottom: 16px;
+            color: var(--text-primary);
+        }
+
+        .roadmap-phase ul {
+            list-style: none;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .roadmap-phase li {
+            font-size: 14px;
+            color: var(--text-muted);
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .roadmap-phase li::before {
+            content: "";
+            width: 6px;
+            height: 6px;
+            background: var(--text-muted);
+            border-radius: 50%;
+            flex-shrink: 0;
+        }
+
+        .roadmap-phase.active li::before {
+            background: var(--accent-teal);
+        }
+
+        /* Priority Items */
+        .priority-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 32px;
+            width: 100%;
+            max-width: 1100px;
+        }
+
+        .priority-item {
+            background: var(--bg-card);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            border-radius: 16px;
+            padding: 28px;
+        }
+
+        .priority-tag {
+            display: inline-block;
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: 600;
+            margin-bottom: 16px;
+        }
+
+        .priority-tag.p0 {
+            background: rgba(239, 68, 68, 0.2);
+            color: #ef4444;
+        }
+
+        .priority-tag.p1 {
+            background: rgba(245, 158, 11, 0.2);
+            color: #f59e0b;
+        }
+
+        .priority-item h4 {
+            font-size: 18px;
+            font-weight: 600;
+            margin-bottom: 12px;
+        }
+
+        .priority-item ul {
+            list-style: none;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .priority-item li {
+            font-size: 14px;
+            color: var(--text-muted);
+            padding-left: 16px;
+            position: relative;
+        }
+
+        .priority-item li::before {
+            content: "-";
+            position: absolute;
+            left: 0;
+            color: var(--text-muted);
+        }
+
+        /* Ask Section */
+        .ask-bubbles {
+            display: flex;
+            gap: 32px;
+            margin-top: 40px;
+        }
+
+        .ask-bubble {
+            flex: 1;
+            background: var(--bg-card);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            border-radius: 16px;
+            padding: 32px;
+            text-align: center;
+            transition: all 0.3s ease;
+        }
+
+        .ask-bubble:hover {
+            border-color: var(--accent-purple);
+            transform: translateY(-4px);
+        }
+
+        .ask-bubble .icon {
+            font-size: 40px;
+            margin-bottom: 20px;
+        }
+
+        .ask-bubble h4 {
+            font-size: 18px;
+            font-weight: 600;
+            margin-bottom: 12px;
+        }
+
+        .ask-bubble p {
+            font-size: 14px;
+            color: var(--text-muted);
+        }
+
+        /* Closing */
+        .closing-quote {
+            font-size: 24px;
+            font-style: italic;
+            color: var(--text-secondary);
+            max-width: 700px;
+            text-align: center;
+            line-height: 1.6;
+            margin-top: 40px;
+        }
+
+        .bot-handle {
+            font-family: 'SF Mono', 'Fira Code', monospace;
+            font-size: 28px;
+            color: var(--accent-teal);
+            margin: 20px 0;
+        }
+
+        /* Animated Elements */
+        .pulse {
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.6; }
+        }
+
+        .float {
+            animation: float 3s ease-in-out infinite;
+        }
+
+        @keyframes float {
+            0%, 100% { transform: translateY(0); }
+            50% { transform: translateY(-10px); }
+        }
+
+        /* Brain Network Animation */
+        .brain-network {
+            position: relative;
+        }
+
+        .brain-network svg {
+            width: 100%;
+            height: 100%;
+        }
+
+        .brain-node {
+            fill: var(--accent-teal);
+            animation: nodeFloat 3s ease-in-out infinite;
+        }
+
+        .brain-node:nth-child(even) {
+            animation-delay: 0.5s;
+        }
+
+        .brain-edge {
+            stroke: var(--accent-teal);
+            stroke-width: 1;
+            opacity: 0.4;
+            animation: edgePulse 2s ease-in-out infinite;
+        }
+
+        @keyframes nodeFloat {
+            0%, 100% { transform: scale(1); opacity: 0.8; }
+            50% { transform: scale(1.1); opacity: 1; }
+        }
+
+        @keyframes edgePulse {
+            0%, 100% { opacity: 0.2; }
+            50% { opacity: 0.6; }
+        }
+
+        /* Living Data Animation */
+        .living-indicator {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 16px;
+            background: rgba(0, 212, 170, 0.1);
+            border: 1px solid var(--accent-teal);
+            border-radius: 20px;
+            font-size: 14px;
+            color: var(--accent-teal);
+        }
+
+        .living-dot {
+            width: 8px;
+            height: 8px;
+            background: var(--accent-teal);
+            border-radius: 50%;
+            animation: livingPulse 1.5s ease-in-out infinite;
+        }
+
+        @keyframes livingPulse {
+            0%, 100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(0, 212, 170, 0.4); }
+            50% { transform: scale(1.2); box-shadow: 0 0 0 8px rgba(0, 212, 170, 0); }
+        }
+
+        /* Responsive */
+        @media (max-width: 1200px) {
+            .slide {
+                padding: 40px 60px;
+            }
+            h1 { font-size: 56px; }
+            h2 { font-size: 40px; }
+            .cards-grid, .flip-cards { grid-template-columns: repeat(2, 1fr); }
+            .content-split { gap: 40px; }
+        }
+
+        @media (max-width: 768px) {
+            .slide {
+                padding: 30px 40px;
+            }
+            h1 { font-size: 40px; }
+            h2 { font-size: 32px; }
+            .content-split { grid-template-columns: 1fr; }
+            .nav-dots { display: none; }
+            .cards-grid, .flip-cards { grid-template-columns: 1fr; }
+            .priority-grid { grid-template-columns: 1fr; }
+            .roadmap { flex-direction: column; }
+        }
+
+        /* Slide Transitions */
+        .slide-content {
+            opacity: 0;
+            transform: translateY(30px);
+            transition: all 0.6s ease 0.2s;
+        }
+
+        .slide.active .slide-content {
+            opacity: 1;
+            transform: translateY(0);
+        }
+    </style>
+</head>
+<body>
+    <!-- Animated Network Background -->
+    <div class="network-bg">
+        <canvas id="networkCanvas"></canvas>
+    </div>
+
+    <!-- Presentation -->
+    <div class="presentation">
+        <div class="slides-container" id="slidesContainer">
+
+            <!-- SLIDE 1: Title -->
+            <div class="slide active" data-section="intro">
+                <div class="slide-content slide-title">
+                    <div class="logo">Atlantis Plus</div>
+                    <div class="brain-network">
+                        <svg viewBox="0 0 200 200">
+                            <!-- Network nodes forming brain shape -->
+                            <circle class="brain-node" cx="100" cy="40" r="6"/>
+                            <circle class="brain-node" cx="60" cy="60" r="5"/>
+                            <circle class="brain-node" cx="140" cy="60" r="5"/>
+                            <circle class="brain-node" cx="40" cy="90" r="4"/>
+                            <circle class="brain-node" cx="80" cy="80" r="6"/>
+                            <circle class="brain-node" cx="120" cy="80" r="6"/>
+                            <circle class="brain-node" cx="160" cy="90" r="4"/>
+                            <circle class="brain-node" cx="50" cy="120" r="5"/>
+                            <circle class="brain-node" cx="100" cy="100" r="7"/>
+                            <circle class="brain-node" cx="150" cy="120" r="5"/>
+                            <circle class="brain-node" cx="70" cy="140" r="4"/>
+                            <circle class="brain-node" cx="100" cy="130" r="5"/>
+                            <circle class="brain-node" cx="130" cy="140" r="4"/>
+                            <circle class="brain-node" cx="100" cy="160" r="4"/>
+                            <!-- Connecting edges -->
+                            <line class="brain-edge" x1="100" y1="40" x2="60" y2="60"/>
+                            <line class="brain-edge" x1="100" y1="40" x2="140" y2="60"/>
+                            <line class="brain-edge" x1="60" y1="60" x2="40" y2="90"/>
+                            <line class="brain-edge" x1="60" y1="60" x2="80" y2="80"/>
+                            <line class="brain-edge" x1="140" y1="60" x2="160" y2="90"/>
+                            <line class="brain-edge" x1="140" y1="60" x2="120" y2="80"/>
+                            <line class="brain-edge" x1="80" y1="80" x2="100" y2="100"/>
+                            <line class="brain-edge" x1="120" y1="80" x2="100" y2="100"/>
+                            <line class="brain-edge" x1="40" y1="90" x2="50" y2="120"/>
+                            <line class="brain-edge" x1="160" y1="90" x2="150" y2="120"/>
+                            <line class="brain-edge" x1="50" y1="120" x2="70" y2="140"/>
+                            <line class="brain-edge" x1="150" y1="120" x2="130" y2="140"/>
+                            <line class="brain-edge" x1="100" y1="100" x2="100" y2="130"/>
+                            <line class="brain-edge" x1="70" y1="140" x2="100" y2="160"/>
+                            <line class="brain-edge" x1="130" y1="140" x2="100" y2="160"/>
+                            <line class="brain-edge" x1="80" y1="80" x2="50" y2="120"/>
+                            <line class="brain-edge" x1="120" y1="80" x2="150" y2="120"/>
+                        </svg>
+                    </div>
+                    <h1>AI-first Personal Network Memory</h1>
+                    <p class="subtitle">Helping power-connectors remember their network</p>
+                    <p class="tagline">Your network is your most valuable asset. We help you remember it.</p>
+                </div>
+            </div>
+
+            <!-- SLIDE 2: The Pain -->
+            <div class="slide" data-section="why">
+                <div class="section-label">Why We Do It</div>
+                <div class="slide-content content-split">
+                    <div>
+                        <h2>The Forgetting Problem</h2>
+                        <ul class="pain-list">
+                            <li>You know hundreds or thousands of people professionally</li>
+                            <li>Memory fails: "I know someone who could help... but who?"</li>
+                            <li>Information scattered across brain, LinkedIn, email, notes, WhatsApp</li>
+                            <li>"Who do I know in Singapore pharma?"</li>
+                            <li>"Have we actually met before?"</li>
+                        </ul>
+                    </div>
+                    <div class="visual-container">
+                        <div class="comparison">
+                            <div class="comparison-item">
+                                <div class="chaos-visual">
+                                    <svg viewBox="0 0 200 200">
+                                        <rect x="20" y="30" width="60" height="40" fill="none" stroke="#ef4444" stroke-width="2" transform="rotate(-15 50 50)"/>
+                                        <rect x="80" y="20" width="50" height="35" fill="none" stroke="#f59e0b" stroke-width="2" transform="rotate(10 105 37)"/>
+                                        <rect x="40" y="80" width="55" height="45" fill="none" stroke="#3b82f6" stroke-width="2" transform="rotate(-8 67 102)"/>
+                                        <rect x="100" y="70" width="45" height="50" fill="none" stroke="#8b5cf6" stroke-width="2" transform="rotate(5 122 95)"/>
+                                        <rect x="30" y="140" width="65" height="35" fill="none" stroke="#ef4444" stroke-width="2" transform="rotate(12 62 157)"/>
+                                        <rect x="110" y="130" width="50" height="40" fill="none" stroke="#f59e0b" stroke-width="2" transform="rotate(-7 135 150)"/>
+                                        <text x="100" y="200" text-anchor="middle" fill="#64748b" font-size="14">Chaos</text>
+                                    </svg>
+                                </div>
+                            </div>
+                            <div class="vs">vs</div>
+                            <div class="comparison-item">
+                                <div class="organized-visual">
+                                    <svg viewBox="0 0 200 200">
+                                        <circle cx="100" cy="100" r="80" fill="none" stroke="url(#grad1)" stroke-width="2" opacity="0.3"/>
+                                        <circle cx="100" cy="100" r="50" fill="none" stroke="url(#grad1)" stroke-width="2" opacity="0.5"/>
+                                        <circle cx="100" cy="100" r="20" fill="url(#grad1)" opacity="0.8"/>
+                                        <circle cx="100" cy="40" r="8" fill="#00d4aa"/>
+                                        <circle cx="155" cy="75" r="6" fill="#8b5cf6"/>
+                                        <circle cx="155" cy="125" r="7" fill="#00d4aa"/>
+                                        <circle cx="100" cy="160" r="6" fill="#8b5cf6"/>
+                                        <circle cx="45" cy="125" r="8" fill="#00d4aa"/>
+                                        <circle cx="45" cy="75" r="5" fill="#8b5cf6"/>
+                                        <line x1="100" y1="100" x2="100" y2="40" stroke="#00d4aa" stroke-width="1" opacity="0.4"/>
+                                        <line x1="100" y1="100" x2="155" y2="75" stroke="#8b5cf6" stroke-width="1" opacity="0.4"/>
+                                        <line x1="100" y1="100" x2="155" y2="125" stroke="#00d4aa" stroke-width="1" opacity="0.4"/>
+                                        <line x1="100" y1="100" x2="100" y2="160" stroke="#8b5cf6" stroke-width="1" opacity="0.4"/>
+                                        <line x1="100" y1="100" x2="45" y2="125" stroke="#00d4aa" stroke-width="1" opacity="0.4"/>
+                                        <line x1="100" y1="100" x2="45" y2="75" stroke="#8b5cf6" stroke-width="1" opacity="0.4"/>
+                                        <defs>
+                                            <linearGradient id="grad1" x1="0%" y1="0%" x2="100%" y2="100%">
+                                                <stop offset="0%" style="stop-color:#00d4aa;stop-opacity:1" />
+                                                <stop offset="100%" style="stop-color:#8b5cf6;stop-opacity:1" />
+                                            </linearGradient>
+                                        </defs>
+                                        <text x="100" y="200" text-anchor="middle" fill="#00d4aa" font-size="14">Organized</text>
+                                    </svg>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- SLIDE 3: Why Existing Tools Fail -->
+            <div class="slide" data-section="why">
+                <div class="section-label">Why We Do It</div>
+                <div class="slide-content content-full">
+                    <h2 style="text-align: center; margin-bottom: 60px;">Why Existing Tools Fail</h2>
+                    <div class="flip-cards">
+                        <div class="flip-card">
+                            <div class="flip-card-inner">
+                                <div class="flip-card-front">
+                                    <div class="icon">CRM</div>
+                                    <h4>CRMs</h4>
+                                </div>
+                                <div class="flip-card-back">
+                                    <p>Built for deals and pipelines, not relationships. Salesforce doesn't know you had coffee with John last week.</p>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="flip-card">
+                            <div class="flip-card-inner">
+                                <div class="flip-card-front">
+                                    <div class="icon">in</div>
+                                    <h4>LinkedIn</h4>
+                                </div>
+                                <div class="flip-card-back">
+                                    <p>Shows resumes, not YOUR context. You can't search "who do I know who's good at growth hacking?"</p>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="flip-card">
+                            <div class="flip-card-inner">
+                                <div class="flip-card-front">
+                                    <div class="icon">Note</div>
+                                    <h4>Notes Apps</h4>
+                                </div>
+                                <div class="flip-card-back">
+                                    <p>No structure, no semantic search. Information locked in plain text you'll never find again.</p>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="flip-card">
+                            <div class="flip-card-inner">
+                                <div class="flip-card-front">
+                                    <div class="icon">&gt;_</div>
+                                    <h4>Everything</h4>
+                                </div>
+                                <div class="flip-card-back">
+                                    <p>Requires MANUAL EFFORT. Nobody has time to maintain a personal CRM.</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div style="text-align: center; margin-top: 60px;">
+                        <h3 style="color: var(--accent-teal);">Our Vision</h3>
+                        <p style="margin: 0 auto;">AI extracts, structures, and remembers FOR YOU</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- SLIDE 4: Core Philosophy -->
+            <div class="slide" data-section="how">
+                <div class="section-label">How We Do It</div>
+                <div class="slide-content content-split">
+                    <div>
+                        <h2>Your Private Knowledge Graph</h2>
+                        <p class="subtitle" style="margin-bottom: 30px; font-size: 18px; color: var(--accent-purple);">Actually enhanced by community and public data</p>
+                        <ul class="magic-list">
+                            <li>
+                                <div class="magic-icon">P</div>
+                                <div class="magic-content">
+                                    <h4>Every person = structured entity</h4>
+                                    <p>Not just a name, but everything you know about them</p>
+                                </div>
+                            </li>
+                            <li>
+                                <div class="magic-icon">F</div>
+                                <div class="magic-content">
+                                    <h4>Your notes = searchable facts</h4>
+                                    <p>Voice notes become queryable assertions with context</p>
+                                </div>
+                            </li>
+                            <li>
+                                <div class="magic-icon">AI</div>
+                                <div class="magic-content">
+                                    <h4>AI reasons about connections</h4>
+                                    <p>Finds non-obvious links you'd never discover manually</p>
+                                </div>
+                            </li>
+                            <li>
+                                <div class="magic-icon">S</div>
+                                <div class="magic-content">
+                                    <h4>Both private and shared</h4>
+                                    <p>You keep your private data, but benefit from community knowledge and public info</p>
+                                </div>
+                            </li>
+                        </ul>
+                    </div>
+                    <div class="visual-container" style="flex-direction: column; gap: 20px;">
+                        <svg viewBox="0 0 300 200" style="width: 100%; max-width: 400px;">
+                            <!-- Voice note icon -->
+                            <rect x="20" y="70" width="80" height="60" rx="8" fill="#141c2f" stroke="#64748b"/>
+                            <circle cx="45" cy="100" r="15" fill="none" stroke="#00d4aa" stroke-width="2"/>
+                            <rect x="58" y="88" width="30" height="4" rx="2" fill="#00d4aa" opacity="0.6"/>
+                            <rect x="58" y="96" width="25" height="4" rx="2" fill="#00d4aa" opacity="0.4"/>
+                            <rect x="58" y="104" width="28" height="4" rx="2" fill="#00d4aa" opacity="0.5"/>
+                            <text x="60" y="155" fill="#64748b" font-size="11">Voice Note</text>
+
+                            <!-- Arrow -->
+                            <path d="M 110 100 L 150 100" stroke="#00d4aa" stroke-width="2" marker-end="url(#arrowhead)"/>
+                            <defs>
+                                <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+                                    <polygon points="0 0, 10 3.5, 0 7" fill="#00d4aa"/>
+                                </marker>
+                            </defs>
+
+                            <!-- Graph representation -->
+                            <circle cx="200" cy="80" r="20" fill="#141c2f" stroke="#00d4aa" stroke-width="2"/>
+                            <circle cx="250" cy="60" r="12" fill="#141c2f" stroke="#8b5cf6" stroke-width="2"/>
+                            <circle cx="260" cy="110" r="15" fill="#141c2f" stroke="#00d4aa" stroke-width="2"/>
+                            <circle cx="190" cy="130" r="10" fill="#141c2f" stroke="#8b5cf6" stroke-width="2"/>
+                            <line x1="200" y1="80" x2="250" y2="60" stroke="#00d4aa" opacity="0.4"/>
+                            <line x1="200" y1="80" x2="260" y2="110" stroke="#8b5cf6" opacity="0.4"/>
+                            <line x1="200" y1="80" x2="190" y2="130" stroke="#00d4aa" opacity="0.4"/>
+                            <text x="225" y="155" fill="#64748b" font-size="11" text-anchor="middle">Knowledge Graph</text>
+                        </svg>
+                    </div>
+                </div>
+            </div>
+
+            <!-- SLIDE 5: Data Model -->
+            <div class="slide" data-section="how">
+                <div class="section-label">How We Do It</div>
+                <div class="slide-content content-split">
+                    <div>
+                        <h2>Data Philosophy</h2>
+                        <p style="margin-bottom: 30px;">Four layers that capture everything about your network:</p>
+                        <!-- Legend -->
+                        <div style="display: flex; flex-direction: column; gap: 12px; margin-top: 30px;">
+                            <div style="display: flex; align-items: center; gap: 12px;">
+                                <div style="width: 24px; height: 24px; border-radius: 50%; background: var(--gradient-1);"></div>
+                                <span style="color: var(--text-secondary); font-size: 14px;"><strong style="color: var(--text-primary);">Person</strong> - Canonical entity - "Who is this really?"</span>
+                            </div>
+                            <div style="display: flex; align-items: center; gap: 12px;">
+                                <div style="width: 16px; height: 16px; border-radius: 50%; background: var(--accent-purple);"></div>
+                                <span style="color: var(--text-secondary); font-size: 14px;"><strong style="color: var(--text-primary);">Identities</strong> - Multiple platforms (Telegram, LinkedIn, Email...)</span>
+                            </div>
+                            <div style="display: flex; align-items: center; gap: 12px;">
+                                <div style="width: 12px; height: 12px; border-radius: 3px; background: var(--accent-teal);"></div>
+                                <span style="color: var(--text-secondary); font-size: 14px;"><strong style="color: var(--text-primary);">Assertions</strong> - Facts + opinions with confidence scores</span>
+                            </div>
+                            <div style="display: flex; align-items: center; gap: 12px;">
+                                <div style="width: 30px; height: 2px; background: var(--accent-teal); opacity: 0.6;"></div>
+                                <span style="color: var(--text-secondary); font-size: 14px;"><strong style="color: var(--text-primary);">Edges</strong> - Who knows whom, with context</span>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="visual-container" style="height: 400px;">
+                        <!-- Data Philosophy Diagram: Person bubbles with Identities and Assertions inside, connected by Edges -->
+                        <svg viewBox="0 0 400 350" style="width: 100%; max-width: 500px;">
+                            <defs>
+                                <linearGradient id="personGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+                                    <stop offset="0%" style="stop-color:#00d4aa;stop-opacity:0.3" />
+                                    <stop offset="100%" style="stop-color:#8b5cf6;stop-opacity:0.3" />
+                                </linearGradient>
+                            </defs>
+
+                            <!-- Edges connecting persons -->
+                            <line x1="130" y1="120" x2="270" y2="100" stroke="#00d4aa" stroke-width="2" opacity="0.5"/>
+                            <line x1="130" y1="150" x2="200" y2="250" stroke="#00d4aa" stroke-width="2" opacity="0.5"/>
+                            <line x1="270" y1="130" x2="230" y2="250" stroke="#8b5cf6" stroke-width="2" opacity="0.5"/>
+
+                            <!-- Person 1 (main, larger) -->
+                            <circle cx="100" cy="120" r="70" fill="url(#personGrad)" stroke="url(#grad1)" stroke-width="2"/>
+                            <text x="100" y="45" text-anchor="middle" fill="#00d4aa" font-size="11" font-weight="600">PERSON</text>
+                            <!-- Identities inside Person 1 -->
+                            <circle cx="70" cy="90" r="14" fill="#141c2f" stroke="#8b5cf6" stroke-width="2"/>
+                            <text x="70" y="94" text-anchor="middle" fill="#8b5cf6" font-size="8">TG</text>
+                            <circle cx="100" cy="80" r="12" fill="#141c2f" stroke="#8b5cf6" stroke-width="2"/>
+                            <text x="100" y="84" text-anchor="middle" fill="#8b5cf6" font-size="7">in</text>
+                            <circle cx="125" cy="95" r="10" fill="#141c2f" stroke="#8b5cf6" stroke-width="2"/>
+                            <text x="125" y="99" text-anchor="middle" fill="#8b5cf6" font-size="6">@</text>
+                            <!-- Assertions inside Person 1 -->
+                            <rect x="60" y="115" width="25" height="12" rx="3" fill="#00d4aa" opacity="0.7"/>
+                            <rect x="90" y="120" width="30" height="12" rx="3" fill="#00d4aa" opacity="0.5"/>
+                            <rect x="70" y="140" width="35" height="12" rx="3" fill="#00d4aa" opacity="0.6"/>
+                            <rect x="110" y="135" width="20" height="12" rx="3" fill="#00d4aa" opacity="0.4"/>
+
+                            <!-- Person 2 (top right) -->
+                            <circle cx="300" cy="100" r="55" fill="url(#personGrad)" stroke="url(#grad1)" stroke-width="2"/>
+                            <text x="300" y="40" text-anchor="middle" fill="#00d4aa" font-size="11" font-weight="600">PERSON</text>
+                            <!-- Identities inside Person 2 -->
+                            <circle cx="280" cy="80" r="12" fill="#141c2f" stroke="#8b5cf6" stroke-width="2"/>
+                            <text x="280" y="84" text-anchor="middle" fill="#8b5cf6" font-size="7">in</text>
+                            <circle cx="310" cy="75" r="10" fill="#141c2f" stroke="#8b5cf6" stroke-width="2"/>
+                            <text x="310" y="79" text-anchor="middle" fill="#8b5cf6" font-size="6">@</text>
+                            <!-- Assertions inside Person 2 -->
+                            <rect x="275" y="100" width="25" height="10" rx="3" fill="#00d4aa" opacity="0.6"/>
+                            <rect x="305" y="105" width="20" height="10" rx="3" fill="#00d4aa" opacity="0.5"/>
+                            <rect x="285" y="120" width="30" height="10" rx="3" fill="#00d4aa" opacity="0.4"/>
+
+                            <!-- Person 3 (bottom) -->
+                            <circle cx="210" cy="270" r="50" fill="url(#personGrad)" stroke="url(#grad1)" stroke-width="2"/>
+                            <text x="210" y="215" text-anchor="middle" fill="#00d4aa" font-size="11" font-weight="600">PERSON</text>
+                            <!-- Identities inside Person 3 -->
+                            <circle cx="195" cy="255" r="11" fill="#141c2f" stroke="#8b5cf6" stroke-width="2"/>
+                            <text x="195" y="259" text-anchor="middle" fill="#8b5cf6" font-size="7">TG</text>
+                            <circle cx="225" cy="250" r="9" fill="#141c2f" stroke="#8b5cf6" stroke-width="2"/>
+                            <text x="225" y="254" text-anchor="middle" fill="#8b5cf6" font-size="6">@</text>
+                            <!-- Assertions inside Person 3 -->
+                            <rect x="185" y="275" width="22" height="10" rx="3" fill="#00d4aa" opacity="0.6"/>
+                            <rect x="212" y="280" width="18" height="10" rx="3" fill="#00d4aa" opacity="0.5"/>
+                            <rect x="195" y="295" width="28" height="10" rx="3" fill="#00d4aa" opacity="0.4"/>
+
+                            <!-- Edge labels -->
+                            <text x="195" y="90" text-anchor="middle" fill="#64748b" font-size="9" font-style="italic">knows</text>
+                            <text x="145" y="200" text-anchor="middle" fill="#64748b" font-size="9" font-style="italic">worked_with</text>
+                            <text x="265" y="190" text-anchor="middle" fill="#64748b" font-size="9" font-style="italic">recommended</text>
+                        </svg>
+                    </div>
+                </div>
+            </div>
+
+            <!-- SLIDE 6: Living Data -->
+            <div class="slide" data-section="how">
+                <div class="section-label">How We Do It</div>
+                <div class="slide-content content-center">
+                    <div class="living-indicator">
+                        <div class="living-dot"></div>
+                        <span>Living Data</span>
+                    </div>
+                    <h2 style="margin-top: 30px;">Not a Database. A Living Memory.</h2>
+                    <div class="cards-grid" style="margin-top: 50px; grid-template-columns: repeat(3, 1fr);">
+                        <div class="card">
+                            <div class="card-icon">F</div>
+                            <h4>Facts Change</h4>
+                            <p>"Was at Google, now at Stripe"<br>Information evolves over time</p>
+                        </div>
+                        <div class="card">
+                            <div class="card-icon">R</div>
+                            <h4>Relationships Evolve</h4>
+                            <p>Weak ties become strong. Colleagues become friends.</p>
+                        </div>
+                        <div class="card">
+                            <div class="card-icon">AI</div>
+                            <h4>AI Continuously Works</h4>
+                            <p>Extracts, merges, reasons. Always learning from your notes.</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- SLIDE 7: Magic Moments -->
+            <div class="slide" data-section="how">
+                <div class="section-label">How We Do It</div>
+                <div class="slide-content content-split">
+                    <div>
+                        <h2>The Magic Moments</h2>
+                        <ul class="magic-list">
+                            <li>
+                                <div class="magic-icon">S</div>
+                                <div class="magic-content">
+                                    <h4>Non-obvious Search with REASONING</h4>
+                                    <p>"John might help - he worked at pharma before pivoting to tech"</p>
+                                </div>
+                            </li>
+                            <li>
+                                <div class="magic-icon">P</div>
+                                <div class="magic-content">
+                                    <h4>Connection Paths</h4>
+                                    <p>"Ask Sarah - she knows Maria from their Stanford days"</p>
+                                </div>
+                            </li>
+                            <li>
+                                <div class="magic-icon">W</div>
+                                <div class="magic-content">
+                                    <h4>Weak Ties as Superpowers</h4>
+                                    <p>Granovetter's theory: your acquaintances unlock new worlds</p>
+                                </div>
+                            </li>
+                        </ul>
+                    </div>
+                    <div>
+                        <div class="typing-demo">
+                            <span id="typingText"></span><span class="typing-cursor"></span>
+                        </div>
+                        <div style="background: var(--bg-card); border: 1px solid rgba(255,255,255,0.1); border-radius: 12px; padding: 24px; margin-top: 20px;">
+                            <div style="color: var(--accent-teal); font-size: 14px; margin-bottom: 12px;">AI Reasoning:</div>
+                            <p style="font-size: 14px; color: var(--text-secondary); line-height: 1.6;">
+                                "Based on your notes, <strong style="color: var(--text-primary);">Alex Chen</strong> spent 5 years at Novartis Singapore before moving to biotech VC. He mentioned knowing the head of BD at several pharma companies. High relevance for your Singapore pharma question."
+                            </p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- SLIDE 8: Current State -->
+            <div class="slide" data-section="what">
+                <div class="section-label">What We Have</div>
+                <div class="slide-content content-full">
+                    <h2 style="text-align: center; margin-bottom: 50px;">Current State Overview</h2>
+                    <div class="screenshots-grid" style="grid-template-columns: repeat(4, 1fr);">
+                        <div class="screenshot">
+                            <div class="screenshot-placeholder">IN</div>
+                            <h4>Input & Capture</h4>
+                            <p style="font-size: 13px; margin-top: 8px;">Voice notes, text notes, add/delete/merge people</p>
+                        </div>
+                        <div class="screenshot">
+                            <div class="screenshot-placeholder">Q</div>
+                            <h4>Smart Queries</h4>
+                            <p style="font-size: 13px; margin-top: 8px;">Search with reasoning, find connections, get intros</p>
+                        </div>
+                        <div class="screenshot">
+                            <div class="screenshot-placeholder">APP</div>
+                            <h4>Mini App</h4>
+                            <p style="font-size: 13px; margin-top: 8px;">People roster, person details, import tools</p>
+                        </div>
+                        <div class="screenshot">
+                            <div class="screenshot-placeholder">API</div>
+                            <h4>Backend</h4>
+                            <p style="font-size: 13px; margin-top: 8px;">Extraction pipeline, semantic search, enrichment</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- SLIDE 9: Import Capabilities -->
+            <div class="slide" data-section="what">
+                <div class="section-label">What We Have</div>
+                <div class="slide-content content-center">
+                    <h2>Import Capabilities</h2>
+                    <div class="import-flow" style="margin-top: 50px;">
+                        <div class="import-source">
+                            <div class="icon">in</div>
+                            <span>LinkedIn CSV</span>
+                        </div>
+                        <div class="import-source">
+                            <div class="icon">Cal</div>
+                            <span>Calendar ICS</span>
+                        </div>
+                        <div class="import-arrow">-></div>
+                        <div class="import-target">
+                            <!-- Mini network graph visualization -->
+                            <svg viewBox="0 0 80 80" style="width: 60px; height: 60px;">
+                                <circle cx="40" cy="25" r="8" fill="#00d4aa"/>
+                                <circle cx="20" cy="50" r="6" fill="#8b5cf6"/>
+                                <circle cx="60" cy="50" r="6" fill="#8b5cf6"/>
+                                <circle cx="40" cy="65" r="5" fill="#00d4aa"/>
+                                <line x1="40" y1="25" x2="20" y2="50" stroke="#00d4aa" stroke-width="1.5" opacity="0.6"/>
+                                <line x1="40" y1="25" x2="60" y2="50" stroke="#00d4aa" stroke-width="1.5" opacity="0.6"/>
+                                <line x1="20" y1="50" x2="40" y2="65" stroke="#8b5cf6" stroke-width="1.5" opacity="0.6"/>
+                                <line x1="60" y1="50" x2="40" y2="65" stroke="#8b5cf6" stroke-width="1.5" opacity="0.6"/>
+                                <line x1="20" y1="50" x2="60" y2="50" stroke="#00d4aa" stroke-width="1" opacity="0.4"/>
+                            </svg>
+                            <span style="font-size: 14px;">Your Graph</span>
+                        </div>
+                    </div>
+                    <div style="margin-top: 50px; background: var(--bg-card); border: 1px solid rgba(255,255,255,0.08); border-radius: 12px; padding: 24px; max-width: 600px;">
+                        <h4 style="color: var(--accent-purple); margin-bottom: 12px;">Important Caveat</h4>
+                        <p style="font-size: 16px;">Imports give you <strong>quantity</strong> - names, companies, positions.<br>
+                        Voice notes give you <strong>quality</strong> - context, opinions, relationships.</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- SLIDE 10: Demo -->
+            <div class="slide" data-section="what">
+                <div class="section-label">What We Have</div>
+                <div class="slide-content content-center">
+                    <h2>Let's See It In Action</h2>
+                    <div class="qr-container">
+                        <div class="qr-code">
+                            <!-- Real QR Code for https://t.me/atlantisplus_bot -->
+                            <img src="https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=https://t.me/atlantisplus_bot&format=svg" alt="QR Code to @atlantisplus_bot" style="width: 200px; height: 200px;">
+                        </div>
+                    </div>
+                    <div class="bot-handle">@atlantisplus_bot</div>
+                    <ul class="demo-bullets">
+                        <li>Send a voice note about someone you know</li>
+                        <li>Ask "who can help with [your problem]?"</li>
+                        <li>Check the Mini App roster</li>
+                    </ul>
+                </div>
+            </div>
+
+            <!-- SLIDE 11: Immediate Priorities -->
+            <div class="slide" data-section="next">
+                <div class="section-label">What We Do Next</div>
+                <div class="slide-content content-full">
+                    <h2 style="text-align: center; margin-bottom: 50px;">Immediate Priorities</h2>
+                    <div class="priority-grid" style="grid-template-columns: repeat(4, 1fr);">
+                        <div class="priority-item">
+                            <span class="priority-tag p0">P0</span>
+                            <h4>Data Quality</h4>
+                            <ul>
+                                <li>Fix duplicate detection</li>
+                                <li>Pre-extraction validation</li>
+                                <li>Assertion deduplication</li>
+                                <li>Merge UI improvements</li>
+                            </ul>
+                        </div>
+                        <div class="priority-item">
+                            <span class="priority-tag p1">P1</span>
+                            <h4>Getting More Contacts</h4>
+                            <ul>
+                                <li>Priority: Telegram usernames</li>
+                                <li>TG ecosystem community tool</li>
+                                <li>Support for more contact options</li>
+                            </ul>
+                        </div>
+                        <div class="priority-item">
+                            <span class="priority-tag p1">P1</span>
+                            <h4>Richer Facts</h4>
+                            <ul>
+                                <li>Temporal dimension ("as of 2024")</li>
+                                <li>Relationship strength signals</li>
+                                <li>Confidence calibration</li>
+                                <li>Source attribution</li>
+                            </ul>
+                        </div>
+                        <div class="priority-item">
+                            <span class="priority-tag p1">P1</span>
+                            <h4>UX for Evidence</h4>
+                            <ul>
+                                <li>Make it EASY to add notes</li>
+                                <li>Quick capture flows</li>
+                                <li>Meeting prep integration</li>
+                                <li>Post-meeting prompts</li>
+                            </ul>
+                        </div>
+                    </div>
+                    <p style="text-align: center; margin-top: 50px; font-size: 24px; color: var(--accent-teal);">Better data -> Better answers</p>
+                </div>
+            </div>
+
+            <!-- SLIDE 12: Medium-term Vision -->
+            <div class="slide" data-section="next">
+                <div class="section-label">What We Do Next</div>
+                <div class="slide-content content-full">
+                    <h2 style="text-align: center; margin-bottom: 50px;">Medium-term Vision</h2>
+                    <div class="roadmap">
+                        <div class="roadmap-phase active">
+                            <h4>Now</h4>
+                            <h3>Foundation</h3>
+                            <ul>
+                                <li>Core extraction pipeline</li>
+                                <li>Basic semantic search</li>
+                                <li>Manual imports</li>
+                                <li>Chat interface</li>
+                            </ul>
+                        </div>
+                        <div class="roadmap-phase">
+                            <h4>Q1</h4>
+                            <h3>Graph Expansion</h3>
+                            <ul>
+                                <li>More import sources</li>
+                                <li>Auto-enrichment APIs</li>
+                                <li>Email/calendar sync</li>
+                                <li>Contact merging</li>
+                            </ul>
+                        </div>
+                        <div class="roadmap-phase">
+                            <h4>Q2</h4>
+                            <h3>Smarter Reasoning</h3>
+                            <ul>
+                                <li>Weak tie detection</li>
+                                <li>Network centrality</li>
+                                <li>Trust propagation</li>
+                                <li>Intro path finding</li>
+                            </ul>
+                        </div>
+                        <div class="roadmap-phase">
+                            <h4>Q3+</h4>
+                            <h3>Proactive Agent</h3>
+                            <ul>
+                                <li>"You're meeting John..."</li>
+                                <li>Relationship maintenance</li>
+                                <li>Opportunity matching</li>
+                                <li>Network health scores</li>
+                            </ul>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- SLIDE 13: Ask -->
+            <div class="slide" data-section="ask">
+                <div class="section-label">The Ask</div>
+                <div class="slide-content content-center">
+                    <h2>What We Need From You</h2>
+                    <div class="ask-bubbles">
+                        <div class="ask-bubble">
+                            <div class="icon">?</div>
+                            <h4>Concept Feedback</h4>
+                            <p>Does this solve YOUR pain? Would you actually use this?</p>
+                        </div>
+                        <div class="ask-bubble">
+                            <div class="icon">U</div>
+                            <h4>Your Use Cases</h4>
+                            <p>When did you need to "remember your network"? What happened?</p>
+                        </div>
+                        <div class="ask-bubble">
+                            <div class="icon">D</div>
+                            <h4>Data Quality Ideas</h4>
+                            <p>How do we get good evidence? What would make you add notes?</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- SLIDE 14: Closing -->
+            <div class="slide" data-section="ask">
+                <div class="section-label">The Ask</div>
+                <div class="slide-content content-center">
+                    <div class="qr-container">
+                        <div class="qr-code">
+                            <!-- Real QR Code for https://t.me/atlantisplus_bot -->
+                            <img src="https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=https://t.me/atlantisplus_bot&format=svg" alt="QR Code to @atlantisplus_bot" style="width: 200px; height: 200px;">
+                        </div>
+                    </div>
+                    <div class="bot-handle">@atlantisplus_bot</div>
+                    <p class="closing-quote">"Your network is your most valuable asset.<br>Help us build the memory it deserves."</p>
+                    <h1 style="font-size: 48px; margin-top: 40px;">Try It Now</h1>
+                </div>
+            </div>
+
+        </div>
+    </div>
+
+    <!-- Navigation Dots -->
+    <div class="nav-dots" id="navDots"></div>
+
+    <!-- Slide Counter -->
+    <div class="slide-counter" id="slideCounter">1 / 14</div>
+
+    <!-- Navigation Arrows -->
+    <div class="nav-arrows">
+        <button class="nav-arrow" id="prevBtn" disabled>&#8592;</button>
+        <button class="nav-arrow" id="nextBtn">&#8594;</button>
+    </div>
+
+    <script>
+        // Network Background Animation
+        const canvas = document.getElementById('networkCanvas');
+        const ctx = canvas.getContext('2d');
+
+        function resizeCanvas() {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+        }
+        resizeCanvas();
+        window.addEventListener('resize', resizeCanvas);
+
+        const nodes = [];
+        const nodeCount = 50;
+
+        for (let i = 0; i < nodeCount; i++) {
+            nodes.push({
+                x: Math.random() * canvas.width,
+                y: Math.random() * canvas.height,
+                vx: (Math.random() - 0.5) * 0.5,
+                vy: (Math.random() - 0.5) * 0.5,
+                radius: Math.random() * 3 + 1
+            });
+        }
+
+        function drawNetwork() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            // Draw edges
+            ctx.strokeStyle = 'rgba(0, 212, 170, 0.2)';
+            ctx.lineWidth = 1;
+            for (let i = 0; i < nodes.length; i++) {
+                for (let j = i + 1; j < nodes.length; j++) {
+                    const dx = nodes[i].x - nodes[j].x;
+                    const dy = nodes[i].y - nodes[j].y;
+                    const dist = Math.sqrt(dx * dx + dy * dy);
+                    if (dist < 150) {
+                        ctx.globalAlpha = (150 - dist) / 150 * 0.3;
+                        ctx.beginPath();
+                        ctx.moveTo(nodes[i].x, nodes[i].y);
+                        ctx.lineTo(nodes[j].x, nodes[j].y);
+                        ctx.stroke();
+                    }
+                }
+            }
+
+            // Draw nodes
+            ctx.globalAlpha = 1;
+            for (const node of nodes) {
+                ctx.fillStyle = '#00d4aa';
+                ctx.beginPath();
+                ctx.arc(node.x, node.y, node.radius, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Update position
+                node.x += node.vx;
+                node.y += node.vy;
+
+                // Bounce off edges
+                if (node.x < 0 || node.x > canvas.width) node.vx *= -1;
+                if (node.y < 0 || node.y > canvas.height) node.vy *= -1;
+            }
+
+            requestAnimationFrame(drawNetwork);
+        }
+        drawNetwork();
+
+        // Slides Navigation
+        const slides = document.querySelectorAll('.slide');
+        const slidesContainer = document.getElementById('slidesContainer');
+        const navDots = document.getElementById('navDots');
+        const slideCounter = document.getElementById('slideCounter');
+        const prevBtn = document.getElementById('prevBtn');
+        const nextBtn = document.getElementById('nextBtn');
+        let currentSlide = 0;
+        const totalSlides = slides.length;
+
+        // Section markers for nav dots
+        const sectionStarts = {
+            0: true,  // intro
+            1: true,  // why
+            3: true,  // how
+            7: true,  // what
+            10: true, // next
+            12: true  // ask
+        };
+
+        // Create nav dots
+        for (let i = 0; i < totalSlides; i++) {
+            const dot = document.createElement('button');
+            dot.className = 'nav-dot' + (i === 0 ? ' active' : '') + (sectionStarts[i] ? ' section-start' : '');
+            dot.addEventListener('click', () => goToSlide(i));
+            navDots.appendChild(dot);
+        }
+
+        function goToSlide(index) {
+            if (index < 0 || index >= totalSlides) return;
+
+            slides[currentSlide].classList.remove('active');
+            currentSlide = index;
+            slides[currentSlide].classList.add('active');
+
+            slidesContainer.style.transform = `translateX(-${currentSlide * 100}%)`;
+            slideCounter.textContent = `${currentSlide + 1} / ${totalSlides}`;
+
+            // Update nav dots
+            document.querySelectorAll('.nav-dot').forEach((dot, i) => {
+                dot.classList.toggle('active', i === currentSlide);
+            });
+
+            // Update arrow states
+            prevBtn.disabled = currentSlide === 0;
+            nextBtn.disabled = currentSlide === totalSlides - 1;
+
+            // Trigger animations
+            triggerSlideAnimations(currentSlide);
+        }
+
+        function nextSlide() {
+            if (currentSlide < totalSlides - 1) {
+                goToSlide(currentSlide + 1);
+            }
+        }
+
+        function prevSlide() {
+            if (currentSlide > 0) {
+                goToSlide(currentSlide - 1);
+            }
+        }
+
+        // Keyboard navigation
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'ArrowRight' || e.key === ' ') {
+                e.preventDefault();
+                nextSlide();
+            } else if (e.key === 'ArrowLeft') {
+                e.preventDefault();
+                prevSlide();
+            }
+        });
+
+        // Button navigation
+        prevBtn.addEventListener('click', prevSlide);
+        nextBtn.addEventListener('click', nextSlide);
+
+        // Touch navigation
+        let touchStartX = 0;
+        document.addEventListener('touchstart', (e) => {
+            touchStartX = e.touches[0].clientX;
+        });
+        document.addEventListener('touchend', (e) => {
+            const touchEndX = e.changedTouches[0].clientX;
+            const diff = touchStartX - touchEndX;
+            if (Math.abs(diff) > 50) {
+                if (diff > 0) nextSlide();
+                else prevSlide();
+            }
+        });
+
+        // Slide-specific animations
+        function triggerSlideAnimations(slideIndex) {
+            // Data model layers animation
+            if (slideIndex === 4) {
+                const layers = document.querySelectorAll('#layersDiagram .layer');
+                layers.forEach((layer, i) => {
+                    setTimeout(() => {
+                        layer.classList.add('visible');
+                    }, i * 200);
+                });
+            }
+
+            // Typing animation for magic moments
+            if (slideIndex === 6) {
+                startTypingAnimation();
+            }
+        }
+
+        // Typing animation
+        const typingQueries = [
+            "Who can help with pharma in Singapore?",
+            "Who knows about growth hacking?",
+            "Who worked at Google and is now in VC?"
+        ];
+        let typingIndex = 0;
+
+        function startTypingAnimation() {
+            const typingText = document.getElementById('typingText');
+            const query = typingQueries[typingIndex];
+            let charIndex = 0;
+            typingText.textContent = '';
+
+            const typeInterval = setInterval(() => {
+                if (charIndex < query.length) {
+                    typingText.textContent += query[charIndex];
+                    charIndex++;
+                } else {
+                    clearInterval(typeInterval);
+                    setTimeout(() => {
+                        typingIndex = (typingIndex + 1) % typingQueries.length;
+                        if (currentSlide === 6) {
+                            startTypingAnimation();
+                        }
+                    }, 3000);
+                }
+            }, 50);
+        }
+
+        // Initial state
+        goToSlide(0);
+    </script>
+</body>
+</html>

@@ -14,7 +14,7 @@ from telegram.ext import ContextTypes
 from .auth import get_or_create_user
 from .context import load_context, clear_context, get_active_session, set_active_session
 from .dispatcher import classify_message
-from .telegram_api import send_message, send_chat_action
+from .telegram_api import send_message, send_chat_action, send_message_with_web_app_buttons
 from .logging_config import bot_logger as logger
 
 # Direct imports of business logic
@@ -324,6 +324,7 @@ async def handle_chat_message_direct(chat_id: int, text: str, user_id: str, user
     Handle query/dialog message.
 
     Direct call to chat agent with tool use - NO HTTP!
+    If the response contains found people, adds inline keyboard with Mini App buttons.
     """
     logger.info(f"Processing chat query for user_id={user_id}")
 
@@ -334,16 +335,27 @@ async def handle_chat_message_direct(chat_id: int, text: str, user_id: str, user
         # Get session_id from context (if continuing dialog)
         session_id = user_context.get("chat_session_id")
 
-        # Call chat agent directly
-        response_message, new_session_id = await chat_direct(text, user_id, session_id)
+        # Call chat agent directly - returns ChatDirectResult with message, session_id, and people
+        result = await chat_direct(text, user_id, session_id)
 
         # Update context with session_id
-        await set_active_session(str(chat_id), new_session_id)
+        await set_active_session(str(chat_id), result.session_id)
 
-        # Send response
-        await send_message(chat_id, response_message)
+        # If people were found in the search, send message with Mini App buttons
+        if result.people:
+            logger.info(f"Found {len(result.people)} people, adding Mini App buttons")
+            await send_message_with_web_app_buttons(
+                chat_id,
+                result.message,
+                result.people,
+                parse_mode="HTML",
+                max_buttons=5
+            )
+        else:
+            # No people found, send regular message
+            await send_message(chat_id, result.message, parse_mode="HTML")
 
-        logger.info(f"Chat response sent for session_id={new_session_id}")
+        logger.info(f"Chat response sent for session_id={result.session_id}")
 
     except Exception as e:
         logger.error(f"Error in chat handler: {e}", exc_info=True)

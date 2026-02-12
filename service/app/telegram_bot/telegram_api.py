@@ -125,6 +125,71 @@ async def edit_message_text(
         response.raise_for_status()
 
 
+async def send_message_with_web_app_buttons(
+    chat_id: int,
+    text: str,
+    people: list[dict],
+    parse_mode: Optional[str] = None,
+    max_buttons: int = 5
+) -> dict:
+    """
+    Send message with inline keyboard buttons that open Mini App for each person.
+
+    Args:
+        chat_id: Telegram chat ID
+        text: Message text
+        people: List of dicts with 'person_id' and 'name' keys
+        parse_mode: Optional parse mode (Markdown, HTML)
+        max_buttons: Maximum number of buttons to show (default 5)
+
+    Returns:
+        Response dict with message_id
+    """
+    settings = get_settings()
+
+    url = f"https://api.telegram.org/bot{settings.telegram_bot_token}/sendMessage"
+
+    # Build web_app buttons for each person (limit to max_buttons)
+    buttons = []
+    for person in people[:max_buttons]:
+        person_id = person.get('person_id', '')
+        name = person.get('name', 'Unknown')
+        # Truncate name if too long for button
+        if len(name) > 30:
+            name = name[:27] + "..."
+
+        # Mini App URL with startapp parameter for deep linking
+        web_app_url = f"https://evgenyq.github.io/atlantisplus/?startapp=person_{person_id}"
+
+        buttons.append([{
+            "text": f"👤 {name}",
+            "web_app": {"url": web_app_url}
+        }])
+
+    # Add "Open Catalog" button at the end if there are results
+    if people:
+        buttons.append([{
+            "text": "📋 Open Full Catalog",
+            "web_app": {"url": "https://evgenyq.github.io/atlantisplus/"}
+        }])
+
+    payload = {
+        "chat_id": chat_id,
+        "text": text,
+        "reply_markup": {
+            "inline_keyboard": buttons
+        }
+    }
+
+    if parse_mode:
+        payload["parse_mode"] = parse_mode
+
+    async with httpx.AsyncClient() as client:
+        response = await client.post(url, json=payload)
+        response.raise_for_status()
+        return response.json()
+
+
 async def get_telegram_id_for_user(user_id: str) -> Optional[int]:
     """
     Get Telegram chat ID from Supabase user_id.

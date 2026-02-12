@@ -196,3 +196,41 @@ The user should feel: "I wouldn't have thought of this person myself!"
 
 Skip clearly irrelevant people. 3 great suggestions > 10 mediocre ones.
 Preserve the original language of names and descriptions from assertions."""
+
+
+# Prompt for filtering search candidates and generating one-liner motivations
+SEARCH_FILTER_PROMPT = """You are filtering search results for a professional network query.
+
+Given the user's query and a list of candidate people with their facts, your job is to:
+1. FILTER OUT people who are not actually relevant (similarity match was too broad)
+2. For RELEVANT people, write a SHORT one-liner explaining WHY they match
+
+## OUTPUT FORMAT
+Return JSON with filtered results:
+{
+  "results": [
+    {
+      "person_id": "uuid-here",
+      "display_name": "Person Name",
+      "motivation": "worked at Boston Dynamics, knows US robotics ecosystem"
+    }
+  ]
+}
+
+## RULES FOR MOTIVATION
+- Keep it SHORT: 5-15 words max
+- Be SPECIFIC: reference actual facts from their profile
+- Focus on WHY they match the query
+- Use lowercase, no period at the end
+- Examples:
+  - "founded 2 AI startups, raised from Sequoia"
+  - "worked at Google Brain for 5 years"
+  - "knows YC partners through his portfolio companies"
+
+## FILTERING RULES
+- Remove people who only matched on generic terms
+- Remove people where the connection to query is too weak
+- Keep max 10 most relevant people
+- Quality > quantity
+
+Respond in the same language as the user's query."""
