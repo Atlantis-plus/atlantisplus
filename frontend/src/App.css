@@ -99,20 +99,22 @@
   min-height: 100vh;
   display: flex;
   flex-direction: column;
-  padding-bottom: 70px; /* Space for bottom nav */
+  padding-bottom: 72px; /* Space for bottom nav */
+  background: var(--bg-primary, var(--tg-theme-bg-color, #FFFBF5));
 }
 
-/* Bottom navigation */
+/* Bottom navigation - Neobrutalism style */
 .bottom-nav {
   position: fixed;
   bottom: 0;
   left: 0;
   right: 0;
   display: flex;
-  background: var(--tg-theme-bg-color, #fff);
-  border-top: 1px solid var(--tg-theme-hint-color, #ddd);
-  padding: 0.5rem 0;
-  padding-bottom: max(0.5rem, env(safe-area-inset-bottom));
+  background: var(--bg-cream, #FFF8E7);
+  border-top: 3px solid var(--border-color, #1a1a1a);
+  padding: 0.625rem 0;
+  padding-bottom: max(0.625rem, env(safe-area-inset-bottom));
+  z-index: 100;
 }
 
 .nav-btn {
@@ -121,27 +123,50 @@
   flex-direction: column;
   align-items: center;
   gap: 0.25rem;
-  padding: 0.5rem;
+  padding: 0.5rem 0.25rem;
   border: none;
   background: transparent;
-  color: var(--tg-theme-hint-color, #666);
+  color: var(--text-muted, #666);
   cursor: pointer;
+  position: relative;
+  transition: color 0.15s ease;
+}
+
+.nav-btn:hover {
+  color: var(--text-primary, #1a1a1a);
 }
 
 .nav-btn.active {
-  color: var(--tg-theme-button-color, #3390ec);
+  color: var(--text-primary, #1a1a1a);
+}
+
+/* Active indicator - bold underline */
+.nav-btn.active::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 32px;
+  height: 3px;
+  background: var(--accent-primary, #FF6B35);
+  border-radius: 2px 2px 0 0;
 }
 
 .nav-btn:disabled {
   opacity: 0.4;
+  cursor: not-allowed;
 }
 
-.nav-icon {
-  font-size: 1.25rem;
+.nav-btn svg {
+  flex-shrink: 0;
 }
 
 .nav-label {
-  font-size: 0.625rem;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
 }
 
 /* Mode switcher */
@@ -988,9 +1013,7 @@
   font-size: 0.8125rem;
 }
 
-.shared-notice::before {
-  content: '👤';
-}
+/* Icon added via React component instead of CSS pseudo-element */
 
 /* Delete button */
 .delete-btn {
@@ -1399,9 +1422,7 @@
   gap: 0.5rem;
 }
 
-.dedup-notice::before {
-  content: '🔄';
-}
+/* Icon added via React component instead of CSS pseudo-element */
 
 /* ============================================
    CONTACTS & IDENTITIES STYLES

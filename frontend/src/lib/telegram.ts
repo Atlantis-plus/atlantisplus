@@ -6,7 +6,40 @@ export const initTelegram = () => {
   if (WebApp.initData) {
     WebApp.ready();
     WebApp.expand();
+
+    // Apply theme based on Telegram colorScheme
+    applyTelegramTheme();
   }
+};
+
+/**
+ * Get Telegram's color scheme (light/dark).
+ * Falls back to system preference if not in Telegram Mini App.
+ */
+export const getTelegramColorScheme = (): 'light' | 'dark' => {
+  if (WebApp.colorScheme) {
+    return WebApp.colorScheme;
+  }
+  // Fallback to system preference
+  if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
+    return 'dark';
+  }
+  return 'light';
+};
+
+/**
+ * Apply theme to document based on Telegram's colorScheme.
+ * Sets data-theme attribute on documentElement for CSS variable switching.
+ */
+export const applyTelegramTheme = () => {
+  const theme = getTelegramColorScheme();
+  document.documentElement.setAttribute('data-theme', theme);
+
+  // Listen for theme changes in Telegram
+  WebApp.onEvent('themeChanged', () => {
+    const newTheme = getTelegramColorScheme();
+    document.documentElement.setAttribute('data-theme', newTheme);
+  });
 };
 
 export const getTelegramInitData = (): string | null => {

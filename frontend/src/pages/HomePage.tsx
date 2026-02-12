@@ -3,6 +3,19 @@ import { useAuth } from '../hooks/useAuth';
 import { api } from '../lib/api';
 import { openExternalLink } from '../lib/telegram';
 import { supabase } from '../lib/supabase';
+import {
+  UploadIcon,
+  LinkedInIcon,
+  CalendarIcon,
+  CheckCircleIcon,
+  ErrorCircleIcon,
+  SpinnerIcon,
+  RefreshIcon,
+  InfoIcon,
+  XIcon,
+  ExternalLinkIcon,
+  PeopleIcon
+} from '../components/icons';
 
 type Page = 'people' | 'notes' | 'chat' | 'import';
 
@@ -103,7 +116,7 @@ interface ImportProgress {
   batchId: string | null;
   totalContacts: number;
   status: ProcessingStatus;
-  content: string | null;  // Progress message from backend
+  content: string | null;
   error: string | null;
 }
 
@@ -111,8 +124,14 @@ interface ImportProgress {
 const LINKEDIN_IMPORT_KEY = 'atlantis_linkedin_import';
 const CALENDAR_IMPORT_KEY = 'atlantis_calendar_import';
 
+// Import tab type
+type ImportTab = 'linkedin' | 'calendar';
+
 export const HomePage = ({ onNavigate }: HomePageProps) => {
   const { displayName, isAuthenticated, loading, error } = useAuth();
+
+  // Active tab
+  const [activeTab, setActiveTab] = useState<ImportTab>('linkedin');
 
   // LinkedIn state
   const linkedInFileRef = useRef<HTMLInputElement>(null);
@@ -156,7 +175,6 @@ export const HomePage = ({ onNavigate }: HomePageProps) => {
       if (savedLinkedIn) {
         try {
           const saved = JSON.parse(savedLinkedIn);
-          // Check current status in DB
           const { data } = await supabase
             .from('raw_evidence')
             .select('processing_status, content, error_message')
@@ -165,13 +183,8 @@ export const HomePage = ({ onNavigate }: HomePageProps) => {
 
           if (data) {
             if (data.processing_status === 'done' || data.processing_status === 'error') {
-              // Import finished, clear localStorage
               localStorage.removeItem(LINKEDIN_IMPORT_KEY);
-              if (data.processing_status === 'done') {
-                // Could show a "completed" message
-              }
             } else {
-              // Import still in progress, restore state
               setLinkedInProgress({
                 evidenceId: saved.evidenceId,
                 batchId: saved.batchId,
@@ -257,14 +270,12 @@ export const HomePage = ({ onNavigate }: HomePageProps) => {
               error: error_message
             }));
 
-            // If done or error, clear localStorage and loading
             if (processing_status === 'done' || processing_status === 'error') {
               localStorage.removeItem(LINKEDIN_IMPORT_KEY);
               setLinkedInLoading(false);
               if (processing_status === 'done') {
-                // Parse result from content if available
                 setLinkedInResult({
-                  imported: 0, // Will be updated from content parsing
+                  imported: 0,
                   skipped: 0,
                   duplicates_found: 0,
                   updated: 0,
@@ -326,17 +337,14 @@ export const HomePage = ({ onNavigate }: HomePageProps) => {
     setLinkedInError(null);
 
     try {
-      // API now returns 202 immediately with tracking info
       const startResult = await api.importLinkedIn(linkedInFile, true);
 
-      // Save to localStorage for recovery after reload
       localStorage.setItem(LINKEDIN_IMPORT_KEY, JSON.stringify({
         evidenceId: startResult.evidence_id,
         batchId: startResult.batch_id,
         totalContacts: startResult.total_contacts
       }));
 
-      // Set progress state to enable Realtime subscription
       setLinkedInProgress({
         evidenceId: startResult.evidence_id,
         batchId: startResult.batch_id,
@@ -346,14 +354,11 @@ export const HomePage = ({ onNavigate }: HomePageProps) => {
         error: null
       });
 
-      // Clear file selection (but keep loading until done via Realtime)
       setLinkedInPreview(null);
       setLinkedInFile(null);
       if (linkedInFileRef.current) {
         linkedInFileRef.current.value = '';
       }
-
-      // Note: setLinkedInLoading(false) will be called by Realtime when status='done'
     } catch (err) {
       setLinkedInError(err instanceof Error ? err.message : 'Import failed');
       setLinkedInLoading(false);
@@ -434,44 +439,87 @@ export const HomePage = ({ onNavigate }: HomePageProps) => {
 
   if (loading) {
     return (
-      <div className="page">
-        <div className="loading">Loading...</div>
+      <div className="min-h-screen flex items-center justify-center" style={{ backgroundColor: 'var(--bg-primary)' }}>
+        <div className="card-neo p-8 flex flex-col items-center gap-4">
+          <SpinnerIcon size={32} className="text-primary" />
+          <span className="font-heading text-lg" style={{ color: 'var(--text-primary)' }}>Loading...</span>
+        </div>
       </div>
     );
   }
 
   if (error) {
     return (
-      <div className="page">
-        <div className="error">
-          <h2>Error</h2>
-          <p>{error}</p>
+      <div className="min-h-screen flex items-center justify-center p-4" style={{ backgroundColor: 'var(--bg-primary)' }}>
+        <div className="card-neo p-6 max-w-md" style={{ backgroundColor: 'var(--accent-danger)' }}>
+          <div className="flex items-center gap-3 mb-3">
+            <ErrorCircleIcon size={24} className="text-white" />
+            <h2 className="font-heading text-xl text-white">Error</h2>
+          </div>
+          <p className="text-white">{error}</p>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="page">
-      <header className="header">
-        <h1>Import Contacts</h1>
-        <p className="subtitle">LinkedIn & Calendar</p>
+    <div className="min-h-screen p-4" style={{ backgroundColor: 'var(--bg-primary)' }}>
+      {/* Header */}
+      <header className="mb-6">
+        <h1 className="font-heading text-2xl font-bold mb-1" style={{ color: 'var(--text-primary)' }}>
+          Import Contacts
+        </h1>
+        <p style={{ color: 'var(--text-secondary)' }}>Build your network from existing connections</p>
       </header>
 
-      <main className="main">
-        {isAuthenticated ? (
-          <>
-            <div className="welcome">
-              <p>Welcome, <strong>{displayName}</strong>!</p>
-            </div>
+      {isAuthenticated ? (
+        <main className="space-y-6">
+          {/* Welcome message */}
+          <div className="card-neo p-4" style={{ backgroundColor: 'var(--accent-warning)' }}>
+            <p className="font-body" style={{ color: 'var(--text-primary)' }}>
+              Welcome, <strong className="font-heading">{displayName}</strong>!
+            </p>
+          </div>
 
-            {/* LinkedIn Import Section */}
-            <div className="import-section">
-              <h2>LinkedIn Contacts</h2>
+          {/* Tab navigation */}
+          <div className="flex gap-3">
+            <button
+              onClick={() => setActiveTab('linkedin')}
+              className={`btn-neo flex items-center gap-2 ${activeTab === 'linkedin' ? 'btn-neo-primary' : ''}`}
+            >
+              <LinkedInIcon size={18} />
+              LinkedIn
+            </button>
+            <button
+              onClick={() => setActiveTab('calendar')}
+              className={`btn-neo flex items-center gap-2 ${activeTab === 'calendar' ? 'btn-neo-primary' : ''}`}
+            >
+              <CalendarIcon size={18} />
+              Calendar
+            </button>
+          </div>
 
-              <div className="import-instructions">
-                <p>To export your LinkedIn connections:</p>
-                <ol>
+          {/* LinkedIn Tab Content */}
+          {activeTab === 'linkedin' && (
+            <div className="card-neo p-5">
+              <div className="flex items-center gap-3 mb-4">
+                <div className="p-2 border-3 border-black" style={{ backgroundColor: 'var(--accent-primary)' }}>
+                  <LinkedInIcon size={20} className="text-white" />
+                </div>
+                <h2 className="font-heading text-xl font-bold" style={{ color: 'var(--text-primary)' }}>
+                  LinkedIn Contacts
+                </h2>
+              </div>
+
+              {/* Instructions */}
+              <div className="card-neo p-4 mb-5" style={{ backgroundColor: 'var(--bg-secondary)', borderStyle: 'dashed' }}>
+                <div className="flex items-start gap-2 mb-2">
+                  <InfoIcon size={18} style={{ color: 'var(--text-secondary)', flexShrink: 0, marginTop: '2px' }} />
+                  <p className="font-body text-sm" style={{ color: 'var(--text-secondary)' }}>
+                    To export your LinkedIn connections:
+                  </p>
+                </div>
+                <ol className="list-decimal list-inside space-y-1 text-sm pl-6" style={{ color: 'var(--text-secondary)' }}>
                   <li>
                     <a
                       href="#"
@@ -479,9 +527,11 @@ export const HomePage = ({ onNavigate }: HomePageProps) => {
                         e.preventDefault();
                         openExternalLink('https://www.linkedin.com/mypreferences/d/download-my-data');
                       }}
-                      className="external-link"
+                      className="inline-flex items-center gap-1 font-semibold"
+                      style={{ color: 'var(--accent-primary)' }}
                     >
                       Open LinkedIn Settings
+                      <ExternalLinkIcon size={14} />
                     </a>
                   </li>
                   <li>Click "Get a copy of your data"</li>
@@ -490,30 +540,53 @@ export const HomePage = ({ onNavigate }: HomePageProps) => {
                 </ol>
               </div>
 
-              {/* Show progress when background import is running */}
+              {/* Progress indicator for background import */}
               {linkedInProgress.evidenceId && linkedInLoading && (
-                <div className="progress-section">
-                  <h3>Import in Progress</h3>
-                  <div className="progress-stats">
-                    <span>{linkedInProgress.totalContacts} contacts</span>
+                <div className="card-neo p-5 mb-5" style={{ backgroundColor: 'var(--accent-warning)' }}>
+                  <div className="flex items-center justify-between mb-3">
+                    <h3 className="font-heading font-bold" style={{ color: 'var(--text-primary)' }}>
+                      Import in Progress
+                    </h3>
+                    <span className="badge-neo">
+                      {linkedInProgress.totalContacts} contacts
+                    </span>
                   </div>
-                  <div className="progress-bar">
-                    <div className="progress-fill progress-animated"></div>
+
+                  {/* Progress bar */}
+                  <div className="h-4 border-3 border-black bg-white mb-3 overflow-hidden">
+                    <div
+                      className="h-full animate-pulse"
+                      style={{
+                        backgroundColor: 'var(--accent-primary)',
+                        width: '100%',
+                        animation: 'neo-pulse 1.5s ease-in-out infinite'
+                      }}
+                    />
                   </div>
-                  <div className="progress-status">
-                    {linkedInProgress.content || 'Processing...'}
+
+                  <div className="flex items-center gap-2 mb-2">
+                    <SpinnerIcon size={16} />
+                    <span className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>
+                      {linkedInProgress.content || 'Processing...'}
+                    </span>
                   </div>
-                  <p className="progress-hint">
+
+                  <p className="text-xs" style={{ color: 'var(--text-secondary)' }}>
                     You can close this page. Import continues in background.
                   </p>
+
                   {linkedInProgress.error && (
-                    <div className="error-message">{linkedInProgress.error}</div>
+                    <div className="mt-3 p-3 border-3 border-black flex items-center gap-2" style={{ backgroundColor: 'var(--accent-danger)' }}>
+                      <ErrorCircleIcon size={16} className="text-white flex-shrink-0" />
+                      <span className="text-white text-sm">{linkedInProgress.error}</span>
+                    </div>
                   )}
                 </div>
               )}
 
+              {/* File upload area */}
               {!linkedInPreview && !linkedInResult && !linkedInProgress.evidenceId && (
-                <div className="file-upload">
+                <div className="mb-5">
                   <input
                     ref={linkedInFileRef}
                     type="file"
@@ -521,74 +594,162 @@ export const HomePage = ({ onNavigate }: HomePageProps) => {
                     onChange={handleLinkedInFileSelect}
                     disabled={linkedInLoading}
                     id="linkedin-upload"
-                    style={{ display: 'none' }}
+                    className="hidden"
                   />
-                  <label htmlFor="linkedin-upload" className="upload-btn">
-                    {linkedInLoading ? 'Loading...' : 'Upload CSV File'}
+                  <label
+                    htmlFor="linkedin-upload"
+                    className={`card-neo p-8 flex flex-col items-center gap-3 cursor-pointer transition-all ${
+                      linkedInLoading ? 'opacity-50 cursor-not-allowed' : 'hover:translate-x-[-2px] hover:translate-y-[-2px] hover:shadow-[6px_6px_0_var(--shadow-color)]'
+                    }`}
+                    style={{ borderStyle: 'dashed', backgroundColor: 'var(--bg-card)' }}
+                  >
+                    {linkedInLoading ? (
+                      <SpinnerIcon size={32} style={{ color: 'var(--text-muted)' }} />
+                    ) : (
+                      <UploadIcon size={32} style={{ color: 'var(--text-muted)' }} />
+                    )}
+                    <span className="font-heading font-semibold" style={{ color: 'var(--text-primary)' }}>
+                      {linkedInLoading ? 'Loading...' : 'Upload CSV File'}
+                    </span>
+                    <span className="text-sm" style={{ color: 'var(--text-muted)' }}>
+                      Click to select or drag and drop
+                    </span>
                   </label>
                 </div>
               )}
 
+              {/* Error message */}
               {linkedInError && (
-                <div className="error-message">
-                  {linkedInError}
-                  <button onClick={handleLinkedInReset} className="retry-btn">Try Again</button>
+                <div className="card-neo p-4 mb-5 flex items-center justify-between" style={{ backgroundColor: 'var(--accent-danger)' }}>
+                  <div className="flex items-center gap-2">
+                    <ErrorCircleIcon size={18} className="text-white flex-shrink-0" />
+                    <span className="text-white text-sm">{linkedInError}</span>
+                  </div>
+                  <button
+                    onClick={handleLinkedInReset}
+                    className="btn-neo btn-neo-danger flex items-center gap-1 py-1 px-3 text-sm"
+                  >
+                    <RefreshIcon size={14} />
+                    Try Again
+                  </button>
                 </div>
               )}
 
+              {/* Preview section */}
               {linkedInPreview && (
-                <div className="preview-section">
-                  <h3>Preview</h3>
-                  <div className="preview-stats">
-                    <div className="stat">
-                      <span className="stat-value">{linkedInPreview.total_contacts}</span>
-                      <span className="stat-label">Total Contacts</span>
+                <div className="space-y-5">
+                  <h3 className="font-heading text-lg font-bold" style={{ color: 'var(--text-primary)' }}>
+                    Preview
+                  </h3>
+
+                  {/* Stats cards */}
+                  <div className="grid grid-cols-3 gap-3">
+                    <div className="card-neo p-4 text-center" style={{ backgroundColor: 'var(--accent-primary)' }}>
+                      <div className="font-heading text-2xl font-bold text-white">
+                        {linkedInPreview.total_contacts}
+                      </div>
+                      <div className="text-xs text-white opacity-80 uppercase tracking-wide">
+                        Total
+                      </div>
                     </div>
-                    <div className="stat">
-                      <span className="stat-value">{linkedInPreview.with_email}</span>
-                      <span className="stat-label">With Email</span>
+                    <div className="card-neo p-4 text-center" style={{ backgroundColor: 'var(--accent-success)' }}>
+                      <div className="font-heading text-2xl font-bold" style={{ color: 'var(--text-primary)' }}>
+                        {linkedInPreview.with_email}
+                      </div>
+                      <div className="text-xs uppercase tracking-wide" style={{ color: 'var(--text-primary)', opacity: 0.7 }}>
+                        With Email
+                      </div>
                     </div>
-                    <div className="stat">
-                      <span className="stat-value">{linkedInPreview.without_email}</span>
-                      <span className="stat-label">Without Email</span>
+                    <div className="card-neo p-4 text-center" style={{ backgroundColor: 'var(--bg-secondary)' }}>
+                      <div className="font-heading text-2xl font-bold" style={{ color: 'var(--text-primary)' }}>
+                        {linkedInPreview.without_email}
+                      </div>
+                      <div className="text-xs uppercase tracking-wide" style={{ color: 'var(--text-muted)' }}>
+                        No Email
+                      </div>
                     </div>
                   </div>
 
-                  <div className="preview-sample">
-                    <h4>Sample Contacts:</h4>
-                    <ul>
-                      {linkedInPreview.sample.map((contact, i) => (
-                        <li key={i}>
-                          <strong>{contact.first_name} {contact.last_name}</strong>
-                          {contact.company && <span> - {contact.company}</span>}
-                          {contact.position && <span> ({contact.position})</span>}
-                        </li>
-                      ))}
-                    </ul>
+                  {/* Sample contacts table */}
+                  <div className="card-neo p-4" style={{ backgroundColor: 'var(--bg-card)' }}>
+                    <h4 className="font-heading font-bold mb-3" style={{ color: 'var(--text-primary)' }}>
+                      Sample Contacts
+                    </h4>
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-sm border-collapse">
+                        <thead>
+                          <tr>
+                            <th className="text-left p-2 border-b-3 border-black font-heading" style={{ color: 'var(--text-primary)' }}>Name</th>
+                            <th className="text-left p-2 border-b-3 border-black font-heading" style={{ color: 'var(--text-primary)' }}>Company</th>
+                            <th className="text-left p-2 border-b-3 border-black font-heading" style={{ color: 'var(--text-primary)' }}>Position</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {linkedInPreview.sample.map((contact, i) => (
+                            <tr key={i} className="border-b border-gray-200">
+                              <td className="p-2 font-semibold" style={{ color: 'var(--text-primary)' }}>
+                                {contact.first_name} {contact.last_name}
+                              </td>
+                              <td className="p-2" style={{ color: 'var(--text-secondary)' }}>
+                                {contact.company || '-'}
+                              </td>
+                              <td className="p-2" style={{ color: 'var(--text-secondary)' }}>
+                                {contact.position || '-'}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
                   </div>
 
-                  <div className="preview-actions">
+                  {/* Action buttons */}
+                  <div className="flex gap-3">
                     <button
                       onClick={handleLinkedInImport}
-                      className="import-btn"
+                      className="btn-neo btn-neo-primary flex-1 flex items-center justify-center gap-2"
                       disabled={linkedInLoading}
                     >
-                      {linkedInLoading ? 'Importing...' : `Import ${linkedInPreview.total_contacts} Contacts`}
+                      {linkedInLoading ? (
+                        <>
+                          <SpinnerIcon size={18} />
+                          Importing...
+                        </>
+                      ) : (
+                        <>
+                          <UploadIcon size={18} />
+                          Import {linkedInPreview.total_contacts} Contacts
+                        </>
+                      )}
                     </button>
-                    <button onClick={handleLinkedInReset} className="cancel-btn" disabled={linkedInLoading}>
+                    <button
+                      onClick={handleLinkedInReset}
+                      className="btn-neo flex items-center gap-2"
+                      disabled={linkedInLoading}
+                    >
+                      <XIcon size={18} />
                       Cancel
                     </button>
                   </div>
 
+                  {/* Progress during import */}
                   {linkedInLoading && (
-                    <div className="progress-section">
-                      <div className="progress-bar">
-                        <div className="progress-fill progress-animated"></div>
+                    <div className="card-neo p-4" style={{ backgroundColor: 'var(--accent-warning)' }}>
+                      <div className="h-3 border-2 border-black bg-white mb-2 overflow-hidden">
+                        <div
+                          className="h-full"
+                          style={{
+                            backgroundColor: 'var(--accent-primary)',
+                            width: '100%',
+                            animation: 'neo-pulse 1.5s ease-in-out infinite'
+                          }}
+                        />
                       </div>
-                      <div className="progress-status">
+                      <p className="text-sm flex items-center gap-2" style={{ color: 'var(--text-primary)' }}>
+                        <SpinnerIcon size={14} />
                         {linkedInProgress.content || 'Starting import...'}
-                      </div>
-                      <p className="progress-hint">
+                      </p>
+                      <p className="text-xs mt-1" style={{ color: 'var(--text-secondary)' }}>
                         You can close this page. Import continues in background.
                       </p>
                     </div>
@@ -596,39 +757,64 @@ export const HomePage = ({ onNavigate }: HomePageProps) => {
                 </div>
               )}
 
+              {/* Import result */}
               {linkedInResult && (
-                <div className="import-result">
-                  <h3>Import Complete!</h3>
-                  <div className="result-stats">
-                    <div className="stat success">
-                      <span className="stat-value">{linkedInResult.imported}</span>
-                      <span className="stat-label">Imported</span>
+                <div className="space-y-5">
+                  {/* Success header */}
+                  <div className="card-neo p-5" style={{ backgroundColor: 'var(--accent-success)' }}>
+                    <div className="flex items-center gap-3">
+                      <CheckCircleIcon size={28} />
+                      <h3 className="font-heading text-xl font-bold" style={{ color: 'var(--text-primary)' }}>
+                        Import Complete!
+                      </h3>
+                    </div>
+                  </div>
+
+                  {/* Result stats */}
+                  <div className="grid grid-cols-3 gap-3">
+                    <div className="card-neo p-4 text-center" style={{ backgroundColor: 'var(--accent-success)' }}>
+                      <div className="font-heading text-2xl font-bold" style={{ color: 'var(--text-primary)' }}>
+                        {linkedInResult.imported}
+                      </div>
+                      <div className="text-xs uppercase tracking-wide" style={{ color: 'var(--text-primary)' }}>
+                        Imported
+                      </div>
                     </div>
                     {linkedInResult.updated > 0 && (
-                      <div className="stat">
-                        <span className="stat-value">{linkedInResult.updated}</span>
-                        <span className="stat-label">Updated</span>
+                      <div className="card-neo p-4 text-center" style={{ backgroundColor: 'var(--accent-primary)' }}>
+                        <div className="font-heading text-2xl font-bold text-white">
+                          {linkedInResult.updated}
+                        </div>
+                        <div className="text-xs text-white uppercase tracking-wide opacity-80">
+                          Updated
+                        </div>
                       </div>
                     )}
                     {linkedInResult.duplicates_found > 0 && (
-                      <div className="stat warning">
-                        <span className="stat-value">{linkedInResult.duplicates_found}</span>
-                        <span className="stat-label">Skipped</span>
+                      <div className="card-neo p-4 text-center" style={{ backgroundColor: 'var(--accent-warning)' }}>
+                        <div className="font-heading text-2xl font-bold" style={{ color: 'var(--text-primary)' }}>
+                          {linkedInResult.duplicates_found}
+                        </div>
+                        <div className="text-xs uppercase tracking-wide" style={{ color: 'var(--text-primary)' }}>
+                          Skipped
+                        </div>
                       </div>
                     )}
                   </div>
 
                   {/* Analytics */}
                   {linkedInResult.analytics && (
-                    <div className="analytics-section">
+                    <div className="grid gap-4 md:grid-cols-2">
                       {Object.keys(linkedInResult.analytics.by_year || {}).length > 0 && (
-                        <div className="analytics-block">
-                          <h4>By Year</h4>
-                          <div className="analytics-list">
+                        <div className="card-neo p-4">
+                          <h4 className="font-heading font-bold mb-3" style={{ color: 'var(--text-primary)' }}>
+                            By Year
+                          </h4>
+                          <div className="flex flex-wrap gap-2">
                             {Object.entries(linkedInResult.analytics.by_year)
                               .slice(0, 5)
                               .map(([year, count]) => (
-                                <span key={year} className="analytics-item">
+                                <span key={year} className="badge-neo badge-neo-primary">
                                   {year}: {count}
                                 </span>
                               ))}
@@ -636,13 +822,15 @@ export const HomePage = ({ onNavigate }: HomePageProps) => {
                         </div>
                       )}
                       {Object.keys(linkedInResult.analytics.by_company || {}).length > 0 && (
-                        <div className="analytics-block">
-                          <h4>Top Companies</h4>
-                          <div className="analytics-list">
+                        <div className="card-neo p-4">
+                          <h4 className="font-heading font-bold mb-3" style={{ color: 'var(--text-primary)' }}>
+                            Top Companies
+                          </h4>
+                          <div className="flex flex-wrap gap-2">
                             {Object.entries(linkedInResult.analytics.by_company)
                               .slice(0, 5)
                               .map(([company, count]) => (
-                                <span key={company} className="analytics-item">
+                                <span key={company} className="badge-neo badge-neo-lavender">
                                   {company} ({count})
                                 </span>
                               ))}
@@ -652,35 +840,59 @@ export const HomePage = ({ onNavigate }: HomePageProps) => {
                     </div>
                   )}
 
-                  {/* Dedup Result */}
+                  {/* Dedup notice */}
                   {linkedInResult.dedup_result && linkedInResult.dedup_result.duplicates_found !== undefined && linkedInResult.dedup_result.duplicates_found > 0 && (
-                    <div className="dedup-notice">
-                      Found {linkedInResult.dedup_result.duplicates_found} potential duplicates with existing contacts
+                    <div className="card-neo p-4 flex items-center gap-3" style={{ backgroundColor: 'var(--bg-secondary)' }}>
+                      <RefreshIcon size={18} style={{ color: 'var(--text-secondary)' }} />
+                      <span style={{ color: 'var(--text-secondary)' }}>
+                        Found {linkedInResult.dedup_result.duplicates_found} potential duplicates with existing contacts
+                      </span>
                     </div>
                   )}
 
-                  <div className="result-actions">
+                  {/* Action buttons */}
+                  <div className="flex gap-3">
                     <button
                       onClick={() => onNavigate?.('people')}
-                      className="view-btn"
+                      className="btn-neo btn-neo-primary flex-1 flex items-center justify-center gap-2"
                     >
+                      <PeopleIcon size={18} />
                       View Contacts
                     </button>
-                    <button onClick={handleLinkedInReset} className="another-btn">
+                    <button
+                      onClick={handleLinkedInReset}
+                      className="btn-neo flex items-center gap-2"
+                    >
+                      <RefreshIcon size={18} />
                       Import More
                     </button>
                   </div>
                 </div>
               )}
             </div>
+          )}
 
-            {/* Calendar Import Section */}
-            <div className="import-section">
-              <h2>Google Calendar</h2>
+          {/* Calendar Tab Content */}
+          {activeTab === 'calendar' && (
+            <div className="card-neo p-5">
+              <div className="flex items-center gap-3 mb-4">
+                <div className="p-2 border-3 border-black" style={{ backgroundColor: 'var(--accent-danger)' }}>
+                  <CalendarIcon size={20} className="text-white" />
+                </div>
+                <h2 className="font-heading text-xl font-bold" style={{ color: 'var(--text-primary)' }}>
+                  Google Calendar
+                </h2>
+              </div>
 
-              <div className="import-instructions">
-                <p>To export your Google Calendar:</p>
-                <ol>
+              {/* Instructions */}
+              <div className="card-neo p-4 mb-5" style={{ backgroundColor: 'var(--bg-secondary)', borderStyle: 'dashed' }}>
+                <div className="flex items-start gap-2 mb-2">
+                  <InfoIcon size={18} style={{ color: 'var(--text-secondary)', flexShrink: 0, marginTop: '2px' }} />
+                  <p className="font-body text-sm" style={{ color: 'var(--text-secondary)' }}>
+                    To export your Google Calendar:
+                  </p>
+                </div>
+                <ol className="list-decimal list-inside space-y-1 text-sm pl-6" style={{ color: 'var(--text-secondary)' }}>
                   <li>
                     <a
                       href="#"
@@ -688,9 +900,11 @@ export const HomePage = ({ onNavigate }: HomePageProps) => {
                         e.preventDefault();
                         openExternalLink('https://calendar.google.com/calendar/r/settings/export');
                       }}
-                      className="external-link"
+                      className="inline-flex items-center gap-1 font-semibold"
+                      style={{ color: 'var(--accent-primary)' }}
                     >
                       Open Google Calendar Export
+                      <ExternalLinkIcon size={14} />
                     </a>
                   </li>
                   <li>Click "Export" to download ZIP</li>
@@ -699,17 +913,23 @@ export const HomePage = ({ onNavigate }: HomePageProps) => {
                 </ol>
               </div>
 
+              {/* File upload area */}
               {!calendarPreview && !calendarResult && (
-                <div className="file-upload">
-                  <div className="owner-email-input">
+                <div className="space-y-4 mb-5">
+                  {/* Owner email input */}
+                  <div>
+                    <label className="block text-sm font-medium mb-2" style={{ color: 'var(--text-primary)' }}>
+                      Your email (to exclude from attendees)
+                    </label>
                     <input
                       type="email"
-                      placeholder="Your email (to exclude from attendees)"
+                      placeholder="you@example.com"
                       value={ownerEmail}
                       onChange={(e) => setOwnerEmail(e.target.value)}
-                      className="email-input"
+                      className="input-neo"
                     />
                   </div>
+
                   <input
                     ref={calendarFileRef}
                     type="file"
@@ -717,171 +937,302 @@ export const HomePage = ({ onNavigate }: HomePageProps) => {
                     onChange={handleCalendarFileSelect}
                     disabled={calendarLoading}
                     id="calendar-upload"
-                    style={{ display: 'none' }}
+                    className="hidden"
                   />
-                  <label htmlFor="calendar-upload" className="upload-btn">
-                    {calendarLoading ? 'Loading...' : 'Upload ICS File'}
+                  <label
+                    htmlFor="calendar-upload"
+                    className={`card-neo p-8 flex flex-col items-center gap-3 cursor-pointer transition-all ${
+                      calendarLoading ? 'opacity-50 cursor-not-allowed' : 'hover:translate-x-[-2px] hover:translate-y-[-2px] hover:shadow-[6px_6px_0_var(--shadow-color)]'
+                    }`}
+                    style={{ borderStyle: 'dashed', backgroundColor: 'var(--bg-card)' }}
+                  >
+                    {calendarLoading ? (
+                      <SpinnerIcon size={32} style={{ color: 'var(--text-muted)' }} />
+                    ) : (
+                      <UploadIcon size={32} style={{ color: 'var(--text-muted)' }} />
+                    )}
+                    <span className="font-heading font-semibold" style={{ color: 'var(--text-primary)' }}>
+                      {calendarLoading ? 'Loading...' : 'Upload ICS File'}
+                    </span>
+                    <span className="text-sm" style={{ color: 'var(--text-muted)' }}>
+                      Click to select or drag and drop
+                    </span>
                   </label>
                 </div>
               )}
 
+              {/* Error message */}
               {calendarError && (
-                <div className="error-message">
-                  {calendarError}
-                  <button onClick={handleCalendarReset} className="retry-btn">Try Again</button>
+                <div className="card-neo p-4 mb-5 flex items-center justify-between" style={{ backgroundColor: 'var(--accent-danger)' }}>
+                  <div className="flex items-center gap-2">
+                    <ErrorCircleIcon size={18} className="text-white flex-shrink-0" />
+                    <span className="text-white text-sm">{calendarError}</span>
+                  </div>
+                  <button
+                    onClick={handleCalendarReset}
+                    className="btn-neo btn-neo-danger flex items-center gap-1 py-1 px-3 text-sm"
+                  >
+                    <RefreshIcon size={14} />
+                    Try Again
+                  </button>
                 </div>
               )}
 
+              {/* Preview section */}
               {calendarPreview && (
-                <div className="preview-section">
-                  <h3>Preview</h3>
-                  <div className="preview-stats">
-                    <div className="stat">
-                      <span className="stat-value">{calendarPreview.events_with_attendees}</span>
-                      <span className="stat-label">Meetings</span>
+                <div className="space-y-5">
+                  <h3 className="font-heading text-lg font-bold" style={{ color: 'var(--text-primary)' }}>
+                    Preview
+                  </h3>
+
+                  {/* Stats cards */}
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="card-neo p-4 text-center" style={{ backgroundColor: 'var(--accent-primary)' }}>
+                      <div className="font-heading text-2xl font-bold text-white">
+                        {calendarPreview.events_with_attendees}
+                      </div>
+                      <div className="text-xs text-white opacity-80 uppercase tracking-wide">
+                        Meetings
+                      </div>
                     </div>
-                    <div className="stat">
-                      <span className="stat-value">{calendarPreview.unique_attendees}</span>
-                      <span className="stat-label">People</span>
+                    <div className="card-neo p-4 text-center" style={{ backgroundColor: 'var(--accent-success)' }}>
+                      <div className="font-heading text-2xl font-bold" style={{ color: 'var(--text-primary)' }}>
+                        {calendarPreview.unique_attendees}
+                      </div>
+                      <div className="text-xs uppercase tracking-wide" style={{ color: 'var(--text-primary)', opacity: 0.7 }}>
+                        People
+                      </div>
                     </div>
                   </div>
-                  <p className="date-range">Date range: {calendarPreview.date_range}</p>
 
-                  <div className="preview-sample">
-                    <h4>Top Attendees:</h4>
-                    <ul>
+                  {/* Date range */}
+                  <div className="card-neo p-3 flex items-center gap-2" style={{ backgroundColor: 'var(--bg-secondary)' }}>
+                    <CalendarIcon size={16} style={{ color: 'var(--text-secondary)' }} />
+                    <span className="text-sm" style={{ color: 'var(--text-secondary)' }}>
+                      Date range: {calendarPreview.date_range}
+                    </span>
+                  </div>
+
+                  {/* Top attendees */}
+                  <div className="card-neo p-4" style={{ backgroundColor: 'var(--bg-card)' }}>
+                    <h4 className="font-heading font-bold mb-3" style={{ color: 'var(--text-primary)' }}>
+                      Top Attendees
+                    </h4>
+                    <div className="space-y-2">
                       {calendarPreview.top_attendees.slice(0, 5).map((attendee, i) => (
-                        <li key={i}>
-                          <strong>{attendee.name || attendee.email}</strong>
-                          <span className="meeting-count"> ({attendee.meeting_count} meetings)</span>
-                        </li>
+                        <div key={i} className="flex items-center justify-between p-2 border-b border-gray-200 last:border-b-0">
+                          <span className="font-semibold" style={{ color: 'var(--text-primary)' }}>
+                            {attendee.name || attendee.email}
+                          </span>
+                          <span className="badge-neo badge-neo-primary text-xs">
+                            {attendee.meeting_count} meetings
+                          </span>
+                        </div>
                       ))}
-                    </ul>
+                    </div>
                   </div>
 
-                  <div className="preview-sample">
-                    <h4>Sample Events:</h4>
-                    <ul>
+                  {/* Sample events */}
+                  <div className="card-neo p-4" style={{ backgroundColor: 'var(--bg-card)' }}>
+                    <h4 className="font-heading font-bold mb-3" style={{ color: 'var(--text-primary)' }}>
+                      Sample Events
+                    </h4>
+                    <div className="space-y-2">
                       {calendarPreview.sample_events.map((event, i) => (
-                        <li key={i}>
-                          <strong>{event.summary}</strong>
-                          <span className="event-date"> - {event.date}</span>
-                        </li>
+                        <div key={i} className="p-2 border-b border-gray-200 last:border-b-0">
+                          <div className="font-semibold" style={{ color: 'var(--text-primary)' }}>
+                            {event.summary}
+                          </div>
+                          <div className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                            {event.date}
+                          </div>
+                        </div>
                       ))}
-                    </ul>
+                    </div>
                   </div>
 
-                  <div className="preview-actions">
+                  {/* Action buttons */}
+                  <div className="flex gap-3">
                     <button
                       onClick={handleCalendarImport}
-                      className="import-btn"
+                      className="btn-neo btn-neo-primary flex-1 flex items-center justify-center gap-2"
                       disabled={calendarLoading}
                     >
-                      {calendarLoading ? 'Importing...' : `Import ${calendarPreview.unique_attendees} People`}
+                      {calendarLoading ? (
+                        <>
+                          <SpinnerIcon size={18} />
+                          Importing...
+                        </>
+                      ) : (
+                        <>
+                          <UploadIcon size={18} />
+                          Import {calendarPreview.unique_attendees} People
+                        </>
+                      )}
                     </button>
-                    <button onClick={handleCalendarReset} className="cancel-btn" disabled={calendarLoading}>
+                    <button
+                      onClick={handleCalendarReset}
+                      className="btn-neo flex items-center gap-2"
+                      disabled={calendarLoading}
+                    >
+                      <XIcon size={18} />
                       Cancel
                     </button>
                   </div>
 
+                  {/* Progress during import */}
                   {calendarLoading && (
-                    <div className="progress-section">
-                      <div className="progress-bar">
-                        <div className="progress-fill progress-animated"></div>
+                    <div className="card-neo p-4" style={{ backgroundColor: 'var(--accent-warning)' }}>
+                      <div className="h-3 border-2 border-black bg-white mb-3 overflow-hidden">
+                        <div
+                          className="h-full"
+                          style={{
+                            backgroundColor: 'var(--accent-primary)',
+                            width: '100%',
+                            animation: 'neo-pulse 1.5s ease-in-out infinite'
+                          }}
+                        />
                       </div>
-                      <div className="progress-steps">
-                        <span className="step active">Uploading</span>
-                        <span className="step">Processing calendar</span>
-                        <span className="step">Creating contacts</span>
-                        <span className="step">Finding duplicates</span>
+                      <div className="flex flex-wrap gap-2 text-xs">
+                        <span className="badge-neo badge-neo-primary">Uploading</span>
+                        <span className="badge-neo">Processing calendar</span>
+                        <span className="badge-neo">Creating contacts</span>
+                        <span className="badge-neo">Finding duplicates</span>
                       </div>
                     </div>
                   )}
                 </div>
               )}
 
+              {/* Import result */}
               {calendarResult && (
-                <div className="import-result">
-                  <h3>Import Complete!</h3>
-                  <div className="result-stats">
-                    <div className="stat success">
-                      <span className="stat-value">{calendarResult.imported_people}</span>
-                      <span className="stat-label">New People</span>
+                <div className="space-y-5">
+                  {/* Success header */}
+                  <div className="card-neo p-5" style={{ backgroundColor: 'var(--accent-success)' }}>
+                    <div className="flex items-center gap-3">
+                      <CheckCircleIcon size={28} />
+                      <h3 className="font-heading text-xl font-bold" style={{ color: 'var(--text-primary)' }}>
+                        Import Complete!
+                      </h3>
                     </div>
-                    <div className="stat">
-                      <span className="stat-value">{calendarResult.updated_existing}</span>
-                      <span className="stat-label">Updated</span>
+                  </div>
+
+                  {/* Result stats */}
+                  <div className="grid grid-cols-3 gap-3">
+                    <div className="card-neo p-4 text-center" style={{ backgroundColor: 'var(--accent-success)' }}>
+                      <div className="font-heading text-2xl font-bold" style={{ color: 'var(--text-primary)' }}>
+                        {calendarResult.imported_people}
+                      </div>
+                      <div className="text-xs uppercase tracking-wide" style={{ color: 'var(--text-primary)' }}>
+                        New People
+                      </div>
                     </div>
-                    <div className="stat">
-                      <span className="stat-value">{calendarResult.imported_meetings}</span>
-                      <span className="stat-label">Meetings</span>
+                    <div className="card-neo p-4 text-center" style={{ backgroundColor: 'var(--accent-primary)' }}>
+                      <div className="font-heading text-2xl font-bold text-white">
+                        {calendarResult.updated_existing}
+                      </div>
+                      <div className="text-xs text-white uppercase tracking-wide opacity-80">
+                        Updated
+                      </div>
+                    </div>
+                    <div className="card-neo p-4 text-center" style={{ backgroundColor: 'var(--accent-warning)' }}>
+                      <div className="font-heading text-2xl font-bold" style={{ color: 'var(--text-primary)' }}>
+                        {calendarResult.imported_meetings}
+                      </div>
+                      <div className="text-xs uppercase tracking-wide" style={{ color: 'var(--text-primary)' }}>
+                        Meetings
+                      </div>
                     </div>
                   </div>
 
                   {/* Analytics */}
                   {calendarResult.analytics && (
-                    <div className="analytics-section">
-                      <p className="date-range">Period: {calendarResult.analytics.date_range}</p>
+                    <div className="space-y-4">
+                      {/* Date range */}
+                      <div className="card-neo p-3 flex items-center gap-2" style={{ backgroundColor: 'var(--bg-secondary)' }}>
+                        <CalendarIcon size={16} style={{ color: 'var(--text-secondary)' }} />
+                        <span className="text-sm" style={{ color: 'var(--text-secondary)' }}>
+                          Period: {calendarResult.analytics.date_range}
+                        </span>
+                      </div>
 
-                      {calendarResult.analytics.by_frequency && (
-                        <div className="analytics-block">
-                          <h4>By Meeting Frequency</h4>
-                          <div className="analytics-list">
-                            {Object.entries(calendarResult.analytics.by_frequency).map(([freq, count]) => (
-                              <span key={freq} className="analytics-item">
-                                {freq} meetings: {count} people
-                              </span>
-                            ))}
-                          </div>
-                        </div>
-                      )}
-
-                      {Object.keys(calendarResult.analytics.top_domains || {}).length > 0 && (
-                        <div className="analytics-block">
-                          <h4>Top Domains</h4>
-                          <div className="analytics-list">
-                            {Object.entries(calendarResult.analytics.top_domains)
-                              .slice(0, 5)
-                              .map(([domain, count]) => (
-                                <span key={domain} className="analytics-item">
-                                  {domain} ({count})
+                      <div className="grid gap-4 md:grid-cols-2">
+                        {calendarResult.analytics.by_frequency && (
+                          <div className="card-neo p-4">
+                            <h4 className="font-heading font-bold mb-3" style={{ color: 'var(--text-primary)' }}>
+                              By Meeting Frequency
+                            </h4>
+                            <div className="flex flex-wrap gap-2">
+                              {Object.entries(calendarResult.analytics.by_frequency).map(([freq, count]) => (
+                                <span key={freq} className="badge-neo badge-neo-primary">
+                                  {freq}: {count} people
                                 </span>
                               ))}
+                            </div>
                           </div>
-                        </div>
-                      )}
+                        )}
+                        {Object.keys(calendarResult.analytics.top_domains || {}).length > 0 && (
+                          <div className="card-neo p-4">
+                            <h4 className="font-heading font-bold mb-3" style={{ color: 'var(--text-primary)' }}>
+                              Top Domains
+                            </h4>
+                            <div className="flex flex-wrap gap-2">
+                              {Object.entries(calendarResult.analytics.top_domains)
+                                .slice(0, 5)
+                                .map(([domain, count]) => (
+                                  <span key={domain} className="badge-neo badge-neo-peach">
+                                    {domain} ({count})
+                                  </span>
+                                ))}
+                            </div>
+                          </div>
+                        )}
+                      </div>
                     </div>
                   )}
 
-                  {/* Dedup Result */}
+                  {/* Dedup notice */}
                   {calendarResult.dedup_result && calendarResult.dedup_result.duplicates_found !== undefined && calendarResult.dedup_result.duplicates_found > 0 && (
-                    <div className="dedup-notice">
-                      Found {calendarResult.dedup_result.duplicates_found} potential duplicates with existing contacts
+                    <div className="card-neo p-4 flex items-center gap-3" style={{ backgroundColor: 'var(--bg-secondary)' }}>
+                      <RefreshIcon size={18} style={{ color: 'var(--text-secondary)' }} />
+                      <span style={{ color: 'var(--text-secondary)' }}>
+                        Found {calendarResult.dedup_result.duplicates_found} potential duplicates with existing contacts
+                      </span>
                     </div>
                   )}
 
-                  <div className="result-actions">
+                  {/* Action buttons */}
+                  <div className="flex gap-3">
                     <button
                       onClick={() => onNavigate?.('people')}
-                      className="view-btn"
+                      className="btn-neo btn-neo-primary flex-1 flex items-center justify-center gap-2"
                     >
+                      <PeopleIcon size={18} />
                       View Contacts
                     </button>
-                    <button onClick={handleCalendarReset} className="another-btn">
+                    <button
+                      onClick={handleCalendarReset}
+                      className="btn-neo flex items-center gap-2"
+                    >
+                      <RefreshIcon size={18} />
                       Import More
                     </button>
                   </div>
                 </div>
               )}
             </div>
-          </>
-        ) : (
-          <div className="dev-mode">
-            <p>Development mode</p>
-            <p className="hint">Open in Telegram Mini App for full functionality</p>
-          </div>
-        )}
-      </main>
+          )}
+        </main>
+      ) : (
+        <div className="card-neo p-8 text-center">
+          <h2 className="font-heading text-xl font-bold mb-2" style={{ color: 'var(--text-primary)' }}>
+            Development Mode
+          </h2>
+          <p style={{ color: 'var(--text-secondary)' }}>
+            Open in Telegram Mini App for full functionality
+          </p>
+        </div>
+      )}
     </div>
   );
 };

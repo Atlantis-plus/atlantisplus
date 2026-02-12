@@ -3,6 +3,16 @@ import { useAuth } from '../hooks/useAuth';
 import { VoiceRecorder } from '../components/VoiceRecorder';
 import { supabase } from '../lib/supabase';
 import { api } from '../lib/api';
+import {
+  MicrophoneIcon,
+  TextIcon,
+  CheckCircleIcon,
+  ErrorCircleIcon,
+  HeadphonesIcon,
+  ScanIcon,
+  ClockIcon,
+  XIcon
+} from '../components/icons';
 
 type NoteMode = 'voice' | 'text';
 
@@ -100,58 +110,74 @@ export const NotesPage = () => {
 
   const getStatusIcon = (status: string) => {
     switch (status) {
-      case 'done': return '✅';
-      case 'error': return '❌';
-      case 'transcribing': return '🎧';
-      case 'extracting': return '🔍';
-      default: return '⏳';
+      case 'done':
+        return <CheckCircleIcon size={16} className="text-green-500" />;
+      case 'error':
+        return <ErrorCircleIcon size={16} className="text-red-500" />;
+      case 'transcribing':
+        return <HeadphonesIcon size={16} className="text-blue-500" />;
+      case 'extracting':
+        return <ScanIcon size={16} className="text-yellow-500" />;
+      default:
+        return <ClockIcon size={16} className="text-gray-400" />;
     }
   };
 
   if (!isAuthenticated) {
     return (
-      <div className="page">
-        <div className="error">
-          <p>Please authenticate first</p>
+      <div className="p-4">
+        <div className="card-neo p-4 bg-red-50 border-red-500">
+          <p className="text-red-600 font-medium">Please authenticate first</p>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="page">
-      <header className="header">
-        <h1>Add Note</h1>
-        <p className="subtitle">Record or write about people you know</p>
+    <div className="min-h-screen p-4">
+      {/* Page Header */}
+      <header className="mb-6">
+        <h1 className="font-heading text-2xl font-bold">Add Note</h1>
+        <p className="text-[var(--text-secondary)] mt-1">
+          Record or write about people you know
+        </p>
       </header>
 
-      <main className="main">
-        {/* Mode switcher */}
-        <div className="mode-switcher">
+      <main className="space-y-6">
+        {/* Mode Switcher */}
+        <div className="flex gap-2">
           <button
-            className={`mode-btn ${mode === 'voice' ? 'active' : ''}`}
+            className={`btn-neo flex-1 ${mode === 'voice' ? 'btn-neo-primary' : ''}`}
             onClick={() => setMode('voice')}
           >
-            🎤 Voice
+            <MicrophoneIcon size={18} />
+            <span>Voice</span>
           </button>
           <button
-            className={`mode-btn ${mode === 'text' ? 'active' : ''}`}
+            className={`btn-neo flex-1 ${mode === 'text' ? 'btn-neo-primary' : ''}`}
             onClick={() => setMode('text')}
           >
-            ✏️ Text
+            <TextIcon size={18} />
+            <span>Text</span>
           </button>
         </div>
 
-        {/* Error display */}
+        {/* Error Display */}
         {error && (
-          <div className="error-banner">
-            {error}
-            <button onClick={() => setError(null)}>×</button>
+          <div className="card-neo bg-red-50 border-red-500 flex items-center justify-between gap-3 p-3">
+            <span className="text-red-600 text-sm">{error}</span>
+            <button
+              onClick={() => setError(null)}
+              className="p-1 hover:bg-red-100 rounded transition-colors"
+              aria-label="Dismiss error"
+            >
+              <XIcon size={18} className="text-red-500" />
+            </button>
           </div>
         )}
 
-        {/* Input area */}
-        <div className="input-area">
+        {/* Input Area */}
+        <div className="card-neo p-4">
           {mode === 'voice' ? (
             <VoiceRecorder
               userId={userId!}
@@ -159,15 +185,16 @@ export const NotesPage = () => {
               onError={handleError}
             />
           ) : (
-            <div className="text-input">
+            <div className="space-y-4">
               <textarea
                 value={textNote}
                 onChange={(e) => setTextNote(e.target.value)}
-                placeholder="Write about someone you know...&#10;&#10;Example: Met Ivan at the conference. He's CTO at TechStartup, strong in ML and data pipelines. Based in Moscow. Very responsive, helped me with a recommendation last month."
+                placeholder={`Write about someone you know...\n\nExample: Met Ivan at the conference. He's CTO at TechStartup, strong in ML and data pipelines. Based in Moscow. Very responsive, helped me with a recommendation last month.`}
                 rows={6}
+                className="input-neo"
               />
               <button
-                className="submit-btn"
+                className="btn-neo btn-neo-primary w-full"
                 onClick={handleTextSubmit}
                 disabled={!textNote.trim() || submitting}
               >
@@ -177,15 +204,20 @@ export const NotesPage = () => {
           )}
         </div>
 
-        {/* Recent evidence */}
+        {/* Recent Evidence */}
         {recentEvidence.length > 0 && (
-          <div className="recent-section">
-            <h3>Recent Notes</h3>
-            <ul className="evidence-list">
+          <div className="space-y-3">
+            <h3 className="font-heading font-semibold text-lg">Recent Notes</h3>
+            <ul className="space-y-2">
               {recentEvidence.map((e) => (
-                <li key={e.evidence_id} className="evidence-item">
-                  <span className="status-icon">{getStatusIcon(e.processing_status)}</span>
-                  <span className="evidence-preview">
+                <li
+                  key={e.evidence_id}
+                  className="card-neo p-3 flex items-center gap-3"
+                >
+                  <span className="flex-shrink-0">
+                    {getStatusIcon(e.processing_status)}
+                  </span>
+                  <span className="text-sm truncate">
                     {e.content?.slice(0, 50) || 'Processing...'}
                     {e.content?.length > 50 ? '...' : ''}
                   </span>

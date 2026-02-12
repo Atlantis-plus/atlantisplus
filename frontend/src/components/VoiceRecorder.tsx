@@ -1,6 +1,7 @@
 import { useState, useRef, useCallback } from 'react';
 import { supabase } from '../lib/supabase';
 import { api } from '../lib/api';
+import { MicrophoneIcon, SpinnerIcon } from './icons';
 
 interface VoiceRecorderProps {
   userId: string;
@@ -145,31 +146,61 @@ export const VoiceRecorder = ({ userId, onProcessingStarted, onError }: VoiceRec
   };
 
   return (
-    <div className="voice-recorder">
+    <div className="flex flex-col items-center gap-4">
+      {/* Debug info - subtle styling */}
       {debugInfo && (
-        <div className="debug-info" style={{ fontSize: '10px', color: '#666', marginBottom: '8px' }}>
+        <div className="w-full px-3 py-2 text-xs text-[var(--text-muted)] bg-[var(--bg-secondary)] border-2 border-[var(--border-color)] font-mono">
           {debugInfo}
         </div>
       )}
+
       {uploading ? (
-        <div className="recorder-status">
-          <div className="spinner"></div>
-          <span>Uploading...</span>
+        /* Uploading state */
+        <div className="flex flex-col items-center gap-3">
+          <div
+            className="w-20 h-20 flex items-center justify-center rounded-full bg-[var(--bg-card)] border-3 border-[var(--border-color)]"
+            style={{ boxShadow: '4px 4px 0 var(--shadow-color)' }}
+          >
+            <SpinnerIcon size={32} className="text-[var(--accent-primary)]" />
+          </div>
+          <span className="font-semibold text-[var(--text-primary)]">Uploading...</span>
         </div>
       ) : recording ? (
-        <div className="recorder-active">
-          <div className="recording-indicator">
-            <span className="pulse"></span>
-            <span className="duration">{formatDuration(duration)}</span>
+        /* Recording state */
+        <div className="flex flex-col items-center gap-4">
+          {/* Recording indicator with pulsing dot */}
+          <div className="flex items-center gap-3">
+            <span
+              className="w-3 h-3 rounded-full bg-[var(--accent-danger)]"
+              style={{ animation: 'neo-pulse 1s cubic-bezier(0.4, 0, 0.6, 1) infinite' }}
+            />
+            <span
+              className="font-mono font-bold text-2xl text-[var(--text-primary)] tracking-wider"
+              style={{ minWidth: '80px', textAlign: 'center' }}
+            >
+              {formatDuration(duration)}
+            </span>
           </div>
-          <button className="stop-btn" onClick={stopRecording}>
+
+          {/* Stop button */}
+          <button
+            className="btn-neo btn-neo-danger px-6 py-3 rounded-none font-bold uppercase tracking-wide"
+            onClick={stopRecording}
+          >
             Stop Recording
           </button>
         </div>
       ) : (
-        <button className="record-btn" onClick={startRecording}>
-          <span className="icon">🎤</span>
-          <span>Start Recording</span>
+        /* Idle state - large record button */
+        <button
+          className="w-20 h-20 flex items-center justify-center rounded-full bg-[var(--accent-primary)] border-3 border-[var(--border-color)] cursor-pointer transition-transform duration-100 hover:translate-x-[-2px] hover:translate-y-[-2px] active:translate-x-[2px] active:translate-y-[2px]"
+          style={{
+            boxShadow: '4px 4px 0 var(--shadow-color)',
+          }}
+          onClick={startRecording}
+          aria-label="Start Recording"
+        >
+          <MicrophoneIcon size={28} className="text-white" strokeWidth={2.5} />
         </button>
       )}
     </div>

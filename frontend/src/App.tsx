@@ -5,6 +5,7 @@ import { HomePage } from './pages/HomePage';
 import { NotesPage } from './pages/NotesPage';
 import { PeoplePage } from './pages/PeoplePage';
 import { ChatPage } from './pages/ChatPage';
+import { PeopleIcon, NotesIcon, ChatIcon, ImportIcon } from './components/icons';
 import './App.css';
 
 type Page = 'people' | 'notes' | 'chat' | 'import';
@@ -71,28 +72,28 @@ function App() {
             className={`nav-btn ${currentPage === 'people' ? 'active' : ''}`}
             onClick={() => setCurrentPage('people')}
           >
-            <span className="nav-icon">👥</span>
+            <PeopleIcon size={22} />
             <span className="nav-label">People</span>
           </button>
           <button
             className={`nav-btn ${currentPage === 'notes' ? 'active' : ''}`}
             onClick={() => setCurrentPage('notes')}
           >
-            <span className="nav-icon">📝</span>
+            <NotesIcon size={22} />
             <span className="nav-label">Notes</span>
           </button>
           <button
             className={`nav-btn ${currentPage === 'chat' ? 'active' : ''}`}
             onClick={() => setCurrentPage('chat')}
           >
-            <span className="nav-icon">💬</span>
+            <ChatIcon size={22} />
             <span className="nav-label">Chat</span>
           </button>
           <button
             className={`nav-btn ${currentPage === 'import' ? 'active' : ''}`}
             onClick={() => setCurrentPage('import')}
           >
-            <span className="nav-icon">📥</span>
+            <ImportIcon size={22} />
             <span className="nav-label">Import</span>
           </button>
         </nav>
