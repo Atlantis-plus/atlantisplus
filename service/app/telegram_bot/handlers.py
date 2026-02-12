@@ -14,7 +14,7 @@ from telegram.ext import ContextTypes
 from .auth import get_or_create_user
 from .context import load_context, clear_context, get_active_session, set_active_session
 from .dispatcher import classify_message
-from .telegram_api import send_message, send_chat_action, send_message_with_web_app_buttons, broadcast_navigation
+from .telegram_api import send_message, send_chat_action, send_message_with_web_app_buttons
 from .logging_config import bot_logger as logger
 
 # Direct imports of business logic
@@ -507,7 +507,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
     Handle inline keyboard button callbacks.
 
     Callback data format: "action:param1:param2"
-    Actions: merge, reject, view_person
+    Actions: merge, reject
     """
     query = update.callback_query
     user = update.effective_user
@@ -516,6 +516,9 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
     chat_id = query.message.chat_id
 
     logger.info(f"Callback from user_id={user.id}: {callback_data}")
+
+    # Answer the callback to remove loading state
+    await query.answer()
 
     # Authenticate user
     try:
@@ -529,29 +532,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         await query.answer("Authentication error", show_alert=True)
         return
 
-    # Handle view_person callback - navigate within existing Mini App
-    if callback_data.startswith("view_person:"):
-        person_id = callback_data.replace("view_person:", "")
-        logger.info(f"View person callback: person_id={person_id}")
-
-        # Broadcast navigation event via Realtime
-        success = await broadcast_navigation(supabase_user["user_id"], person_id)
-
-        if success:
-            await query.answer("Opening in app...")
-            logger.info(f"Navigation event broadcast for person_id={person_id}")
-        else:
-            # Fallback: answer with a message to open the app
-            await query.answer(
-                "Open the Mini App first, then try again",
-                show_alert=True
-            )
-        return
-
-    # Answer the callback to remove loading state (for other callbacks)
-    await query.answer()
-
-    # Handle other callbacks (merge, reject, etc.)
+    # Handle the callback
     try:
         proactive_service = get_proactive_service()
         response = await proactive_service.handle_callback(

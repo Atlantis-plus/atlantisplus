@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react';
 import { initTelegram, isTelegramMiniApp, parsePersonDeeplink } from './lib/telegram';
 import { useAuth } from './hooks/useAuth';
-import { supabase } from './lib/supabase';
 import { HomePage } from './pages/HomePage';
 import { NotesPage } from './pages/NotesPage';
 import { PeoplePage } from './pages/PeoplePage';
@@ -15,7 +14,7 @@ function App() {
   const [currentPage, setCurrentPage] = useState<Page>('home');
   // Person ID from deeplink - when set, PeoplePage will open this person's profile directly
   const [initialPersonId, setInitialPersonId] = useState<string | null>(null);
-  const { isAuthenticated, loading, telegramId } = useAuth();
+  const { isAuthenticated, loading } = useAuth();
 
   useEffect(() => {
     if (isTelegramMiniApp()) {
@@ -29,42 +28,6 @@ function App() {
       }
     }
   }, []);
-
-  // Subscribe to Realtime navigation events from bot
-  useEffect(() => {
-    if (!telegramId) return;
-
-    console.log('[Nav] Subscribing to navigation events for telegram_id:', telegramId);
-
-    // Subscribe to INSERT events on navigation_events table filtered by telegram_id
-    const channel = supabase
-      .channel(`navigation:${telegramId}`)
-      .on(
-        'postgres_changes',
-        {
-          event: 'INSERT',
-          schema: 'public',
-          table: 'navigation_events',
-          filter: `telegram_id=eq.${telegramId}`
-        },
-        (payload) => {
-          console.log('[Nav] Received navigation event:', payload);
-          const personId = payload.new?.person_id;
-          if (personId) {
-            setInitialPersonId(personId);
-            setCurrentPage('people');
-          }
-        }
-      )
-      .subscribe((status) => {
-        console.log('[Nav] Subscription status:', status);
-      });
-
-    return () => {
-      console.log('[Nav] Unsubscribing from navigation events');
-      supabase.removeChannel(channel);
-    };
-  }, [telegramId]);
 
   if (loading) {
     return (
