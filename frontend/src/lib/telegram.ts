@@ -56,8 +56,8 @@ export const getStartParam = (): string | null => {
  * Returns person_id if found, otherwise null.
  */
 export const parsePersonDeeplink = (): string | null => {
-  // 1. Try Telegram SDK start_param first
-  const tgStartParam = window.Telegram?.WebApp?.initDataUnsafe?.start_param;
+  // 1. Try Telegram SDK start_param first (using imported WebApp)
+  const tgStartParam = WebApp.initDataUnsafe?.start_param;
   if (tgStartParam && tgStartParam.startsWith('person_')) {
     return tgStartParam.replace('person_', '');
   }
