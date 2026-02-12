@@ -14,6 +14,7 @@ import httpx
 
 from ..config import get_settings
 from ..supabase_client import get_supabase_admin
+from ..utils import normalize_linkedin_url
 from .embedding import generate_embedding
 
 
@@ -279,6 +280,14 @@ class EnrichmentService:
             # Increment quota
             await self._increment_quota(owner_id)
 
+            # Create _enriched_at service assertion
+            self._create_enrichment_assertion(
+                person_id=person_id,
+                source="pdl",
+                assertions_created=assertions_created,
+                identities_created=identities_created
+            )
+
             # Update job and person status
             self._update_job_status(job_id, "done", response=pdl_data)
             self._update_person_status(person_id, "done")
@@ -328,6 +337,35 @@ class EnrichmentService:
             "last_enriched_at": datetime.utcnow().isoformat(),
             "updated_at": datetime.utcnow().isoformat()
         }).eq("person_id", str(person_id)).execute()
+
+    def _create_enrichment_assertion(
+        self,
+        person_id: UUID,
+        source: str,
+        assertions_created: int,
+        identities_created: int
+    ):
+        """
+        Create a service assertion to track enrichment status.
+
+        Service predicates start with "_" and are used for internal tracking.
+        """
+        enriched_at = datetime.utcnow().isoformat()
+
+        self.supabase.from_("assertion").insert({
+            "subject_person_id": str(person_id),
+            "predicate": "_enriched_at",
+            "object_value": enriched_at,
+            "object_json": {
+                "source": source,
+                "facts_added": assertions_created,
+                "identities_added": identities_created,
+                "timestamp": enriched_at
+            },
+            "scope": "system",
+            "confidence": 1.0,
+            "embedding": None  # Service assertions don't need embeddings
+        }).execute()
 
     def _safe_list(self, value) -> list:
         """
@@ -411,11 +449,13 @@ class EnrichmentService:
                 self._create_assertion(person_id, "strong_at", skill)
                 assertions_created += 1
 
-        # LinkedIn → identity
+        # LinkedIn → identity (normalized to consistent format)
         linkedin_url = self._safe_str(data.get("linkedin_url"))
         if linkedin_url:
-            if self._create_identity(person_id, "linkedin_url", linkedin_url):
-                identities_created += 1
+            normalized_linkedin = normalize_linkedin_url(linkedin_url)
+            if normalized_linkedin:
+                if self._create_identity(person_id, "linkedin_url", normalized_linkedin):
+                    identities_created += 1
 
         # Email → identity (hashed)
         # PDL "emails" can be: list of dicts, bool, or None
@@ -560,15 +600,37 @@ class EnrichmentService:
         owner_id: UUID,
         person_id: UUID
     ) -> dict:
-        """Get enrichment status for a person."""
+        """
+        Get enrichment status for a person.
+
+        Checks for _enriched_at service assertion to determine if enrichment
+        has been performed.
+        """
+        # Verify person exists and belongs to owner
         person = self.supabase.from_("person").select(
-            "enrichment_status, last_enriched_at"
+            "person_id"
         ).eq("person_id", str(person_id)).eq("owner_id", str(owner_id)).execute()
 
         if not person.data:
             return {"status": "not_found"}
 
-        # Get latest job if any
+        # Check for _enriched_at service assertion
+        enrichment_assertion = self.supabase.from_("assertion").select(
+            "assertion_id, object_value, object_json, created_at"
+        ).eq("subject_person_id", str(person_id)).eq(
+            "predicate", "_enriched_at"
+        ).order("created_at", desc=True).limit(1).execute()
+
+        if enrichment_assertion.data:
+            assertion = enrichment_assertion.data[0]
+            return {
+                "status": "enriched",
+                "last_enriched_at": assertion.get("object_value"),
+                "enrichment_details": assertion.get("object_json"),
+                "last_job": None  # For backwards compatibility
+            }
+
+        # Get latest job if any (for processing/error states)
         job = self.supabase.from_("enrichment_job").select(
             "status, error_message, created_at, completed_at"
         ).eq("person_id", str(person_id)).order(
@@ -576,13 +638,20 @@ class EnrichmentService:
         ).limit(1).execute()
 
         result = {
-            "status": person.data[0]["enrichment_status"],
-            "last_enriched_at": person.data[0].get("last_enriched_at")
+            "status": "not_enriched",
+            "last_enriched_at": None
         }
 
         if job.data:
+            job_status = job.data[0]["status"]
+            # If job is processing, reflect that status
+            if job_status == "processing":
+                result["status"] = "processing"
+            elif job_status == "error":
+                result["status"] = "error"
+
             result["last_job"] = {
-                "status": job.data[0]["status"],
+                "status": job_status,
                 "error": job.data[0].get("error_message"),
                 "completed_at": job.data[0].get("completed_at")
             }

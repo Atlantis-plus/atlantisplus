@@ -32,9 +32,17 @@ class EnrichResponse(BaseModel):
     error: str | None
 
 
+class EnrichmentDetails(BaseModel):
+    source: str
+    facts_added: int
+    identities_added: int
+    timestamp: str
+
+
 class StatusResponse(BaseModel):
-    status: str
+    status: str  # 'enriched' | 'not_enriched' | 'processing' | 'error'
     last_enriched_at: str | None
+    enrichment_details: EnrichmentDetails | None = None
     last_job: dict | None
 
 
@@ -117,9 +125,20 @@ async def get_enrichment_status(
     if status.get("status") == "not_found":
         raise HTTPException(status_code=404, detail="Person not found")
 
+    enrichment_details = None
+    if status.get("enrichment_details"):
+        details = status["enrichment_details"]
+        enrichment_details = EnrichmentDetails(
+            source=details.get("source", "unknown"),
+            facts_added=details.get("facts_added", 0),
+            identities_added=details.get("identities_added", 0),
+            timestamp=details.get("timestamp", "")
+        )
+
     return StatusResponse(
         status=status["status"],
         last_enriched_at=status.get("last_enriched_at"),
+        enrichment_details=enrichment_details,
         last_job=status.get("last_job")
     )
 

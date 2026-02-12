@@ -14,6 +14,7 @@ from app.agents.schemas import (
 from app.services.transcription import transcribe_from_storage
 from app.services.extraction import extract_from_text_simple
 from app.services.embedding import generate_embeddings_batch, create_assertion_text
+from app.utils import normalize_linkedin_url
 
 router = APIRouter(prefix="/process", tags=["process"])
 
@@ -91,11 +92,13 @@ async def process_pipeline(
                     "value": person.identifiers.email.lower()
                 })
             if person.identifiers.linkedin:
-                identities.append({
-                    "person_id": person_id,
-                    "namespace": "linkedin_url",
-                    "value": person.identifiers.linkedin
-                })
+                normalized_linkedin = normalize_linkedin_url(person.identifiers.linkedin)
+                if normalized_linkedin:
+                    identities.append({
+                        "person_id": person_id,
+                        "namespace": "linkedin_url",
+                        "value": normalized_linkedin
+                    })
             if person.identifiers.phone:
                 # Basic phone normalization: keep only digits and leading +
                 phone_value = person.identifiers.phone

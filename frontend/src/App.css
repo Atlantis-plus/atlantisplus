@@ -1682,3 +1682,36 @@
   font-size: 0.8125rem;
   text-align: center;
 }
+
+/* ============================================
+   DANGER ZONE - Delete Section
+   ============================================ */
+
+.danger-zone {
+  margin-top: 2rem;
+  padding-top: 1.5rem;
+  border-top: 1px solid var(--tg-theme-hint-color, #ddd);
+}
+
+.delete-btn-full {
+  width: 100%;
+  padding: 0.875rem 1rem;
+  background: transparent;
+  color: #e53935;
+  border: 1px solid #e53935;
+  border-radius: 10px;
+  font-size: 0.9375rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.delete-btn-full:hover:not(:disabled) {
+  background: #e53935;
+  color: #fff;
+}
+
+.delete-btn-full:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}

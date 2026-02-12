@@ -23,6 +23,7 @@ from app.services.embedding import generate_embeddings_batch
 from app.services.dedup import get_dedup_service
 from app.services.proactive import get_proactive_service
 from app.services.import_analytics import calculate_linkedin_analytics
+from app.utils import normalize_linkedin_url
 
 router = APIRouter(prefix="/import", tags=["import"])
 
@@ -432,16 +433,16 @@ async def process_linkedin_import_background(
             person_id = created_person_ids[person_idx]
             display_name = f"{contact.first_name} {contact.last_name}".strip()
 
-            # Use real LinkedIn profile URL if available, otherwise fallback to search URL
+            # Normalize LinkedIn URL if available
+            # Skip search URLs - normalize_linkedin_url returns None for them
             if contact.url:
-                linkedin_url = contact.url
-            else:
-                linkedin_url = f"https://www.linkedin.com/search/results/people/?keywords={quote(display_name, safe='')}"
-            all_identities.append({
-                'person_id': person_id,
-                'namespace': 'linkedin_url',
-                'value': linkedin_url
-            })
+                normalized_linkedin = normalize_linkedin_url(contact.url)
+                if normalized_linkedin:
+                    all_identities.append({
+                        'person_id': person_id,
+                        'namespace': 'linkedin_url',
+                        'value': normalized_linkedin
+                    })
 
             if contact.email:
                 all_identities.append({

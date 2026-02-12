@@ -377,15 +377,6 @@ export const PeoplePage = ({ initialPersonId, onInitialPersonIdConsumed }: Peopl
             {selectedPerson.display_name}
             {!isOwnPerson && <span className="shared-badge">Shared</span>}
           </h1>
-          {isOwnPerson && (
-            <button
-              className="delete-btn"
-              onClick={() => setShowDeleteConfirm(true)}
-              disabled={deleting}
-            >
-              🗑️ Delete
-            </button>
-          )}
         </header>
 
         <main className="main">
@@ -473,9 +464,16 @@ export const PeoplePage = ({ initialPersonId, onInitialPersonIdConsumed }: Peopl
               {/* Enrichment Status */}
               {enrichmentStatus?.status === 'enriched' && !enrichmentResult && (
                 <div className="enrichment-status">
-                  Last enriched: {enrichmentStatus.last_enriched_at
+                  Enriched on {enrichmentStatus.last_enriched_at
                     ? new Date(enrichmentStatus.last_enriched_at).toLocaleDateString()
                     : 'Unknown'}
+                  {enrichmentStatus.enrichment_details && (
+                    <span className="enrichment-details">
+                      {' '}({enrichmentStatus.enrichment_details.facts_added} facts
+                      {enrichmentStatus.enrichment_details.identities_added > 0 &&
+                        `, ${enrichmentStatus.enrichment_details.identities_added} contacts`})
+                    </span>
+                  )}
                 </div>
               )}
 
@@ -522,19 +520,36 @@ export const PeoplePage = ({ initialPersonId, onInitialPersonIdConsumed }: Peopl
 
           <div className="assertions-section">
             <h3>Known Facts</h3>
-            {assertions.length === 0 ? (
-              <p className="empty-state">No data</p>
-            ) : (
-              <ul className="assertions-list">
-                {assertions.map((a) => (
-                  <li key={a.assertion_id} className="assertion-item">
-                    <span className="assertion-predicate">{formatPredicate(a.predicate)}</span>
-                    <span className="assertion-value">{a.object_value}</span>
-                  </li>
-                ))}
-              </ul>
-            )}
+            {(() => {
+              // Filter out service predicates (starting with "_")
+              const visibleAssertions = assertions.filter(a => !a.predicate.startsWith('_'));
+              return visibleAssertions.length === 0 ? (
+                <p className="empty-state">No data</p>
+              ) : (
+                <ul className="assertions-list">
+                  {visibleAssertions.map((a) => (
+                    <li key={a.assertion_id} className="assertion-item">
+                      <span className="assertion-predicate">{formatPredicate(a.predicate)}</span>
+                      <span className="assertion-value">{a.object_value}</span>
+                    </li>
+                  ))}
+                </ul>
+              );
+            })()}
           </div>
+
+          {/* Danger Zone - Delete button at the bottom */}
+          {isOwnPerson && (
+            <div className="danger-zone">
+              <button
+                className="delete-btn-full"
+                onClick={() => setShowDeleteConfirm(true)}
+                disabled={deleting}
+              >
+                Delete Contact
+              </button>
+            </div>
+          )}
         </main>
 
         {/* Delete Confirmation Modal */}

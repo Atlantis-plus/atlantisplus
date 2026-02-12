@@ -383,14 +383,18 @@ export interface EnrichPersonResponse {
 }
 
 export interface EnrichmentStatusResponse {
-  status: string;
+  status: string;  // 'enriched' | 'not_enriched' | 'processing' | 'error'
   last_enriched_at: string | null;
+  enrichment_details?: {
+    source: string;
+    facts_added: number;
+    identities_added: number;
+    timestamp: string;
+  } | null;
   last_job: {
     status: string;
-    created_at: string;
-    assertions_created?: number;
-    identities_created?: number;
     error?: string;
+    completed_at?: string;
   } | null;
 }
 
