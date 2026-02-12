@@ -133,7 +133,11 @@ async def send_message_with_web_app_buttons(
     max_buttons: int = 5
 ) -> dict:
     """
-    Send message with inline keyboard buttons that open Mini App for each person.
+    Send message with inline keyboard buttons for people.
+
+    Uses callback_data buttons (not web_app) so clicking doesn't create
+    new Mini App instances. Instead, sends Realtime event to navigate
+    within the already-open Mini App.
 
     Args:
         chat_id: Telegram chat ID
@@ -149,7 +153,7 @@ async def send_message_with_web_app_buttons(
 
     url = f"https://api.telegram.org/bot{settings.telegram_bot_token}/sendMessage"
 
-    # Build web_app buttons for each person (limit to max_buttons)
+    # Build callback_data buttons for each person (limit to max_buttons)
     buttons = []
     for person in people[:max_buttons]:
         person_id = person.get('person_id', '')
@@ -158,15 +162,14 @@ async def send_message_with_web_app_buttons(
         if len(name) > 30:
             name = name[:27] + "..."
 
-        # Mini App URL with startapp parameter for deep linking
-        web_app_url = f"https://evgenyq.github.io/atlantisplus/?startapp=person_{person_id}"
-
+        # Use callback_data to navigate within existing Mini App
         buttons.append([{
             "text": f"👤 {name}",
-            "web_app": {"url": web_app_url}
+            "callback_data": f"view_person:{person_id}"
         }])
 
-    # Add "Open Catalog" button at the end if there are results
+    # Add "Open Catalog" button at the end - this one uses web_app
+    # as it's for when user doesn't have app open yet
     if people:
         buttons.append([{
             "text": "📋 Open Full Catalog",
@@ -188,6 +191,59 @@ async def send_message_with_web_app_buttons(
         response = await client.post(url, json=payload)
         response.raise_for_status()
         return response.json()
+
+
+async def broadcast_navigation(user_id: str, person_id: str) -> bool:
+    """
+    Broadcast navigation event to user's Mini App via Supabase Realtime.
+
+    The Mini App subscribes to a channel named 'navigation:{telegram_id}'
+    and receives events to navigate to specific people.
+
+    Args:
+        user_id: Supabase user UUID
+        person_id: Person UUID to navigate to
+
+    Returns:
+        True if broadcast succeeded
+    """
+    from app.supabase_client import get_supabase_admin
+
+    supabase = get_supabase_admin()
+
+    try:
+        # Get telegram_id from user metadata
+        users_response = supabase.auth.admin.list_users()
+
+        telegram_id = None
+        for user in users_response:
+            if str(user.id) == user_id:
+                user_metadata = getattr(user, 'user_metadata', {}) or {}
+                telegram_id = user_metadata.get("telegram_id")
+                break
+
+        if not telegram_id:
+            return False
+
+        # Broadcast via Realtime using postgres_changes channel
+        # The Mini App will subscribe to this channel
+        channel_name = f"navigation:{telegram_id}"
+
+        # Use Supabase's broadcast feature
+        # Note: supabase-py doesn't have direct broadcast support,
+        # so we use a workaround with a navigation_events table
+        supabase.table("navigation_events").insert({
+            "telegram_id": str(telegram_id),
+            "person_id": person_id,
+            "event_type": "navigate_person"
+        }).execute()
+
+        return True
+
+    except Exception as e:
+        import logging
+        logging.error(f"Broadcast navigation failed: {e}")
+        return False
 
 
 async def get_telegram_id_for_user(user_id: str) -> Optional[int]:
