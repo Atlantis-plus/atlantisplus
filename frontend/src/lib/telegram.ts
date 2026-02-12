@@ -48,12 +48,35 @@ export const getStartParam = (): string | null => {
 
 /**
  * Parse start_param to extract person_id if it's a person deeplink.
- * Returns person_id if start_param is "person_{uuid}", otherwise null.
+ * Checks multiple sources:
+ * 1. Telegram SDK start_param (for regular deeplinks like t.me/bot/app?startapp=person_xxx)
+ * 2. URL query parameter (for web_app buttons in inline keyboard)
+ * 3. URL hash parameter as fallback
+ *
+ * Returns person_id if found, otherwise null.
  */
 export const parsePersonDeeplink = (): string | null => {
-  const startParam = getStartParam();
-  if (startParam && startParam.startsWith('person_')) {
-    return startParam.replace('person_', '');
+  // 1. Try Telegram SDK start_param first
+  const tgStartParam = window.Telegram?.WebApp?.initDataUnsafe?.start_param;
+  if (tgStartParam && tgStartParam.startsWith('person_')) {
+    return tgStartParam.replace('person_', '');
   }
+
+  // 2. Try URL query parameter (for web_app buttons)
+  const urlParams = new URLSearchParams(window.location.search);
+  const startappParam = urlParams.get('startapp');
+  if (startappParam && startappParam.startsWith('person_')) {
+    return startappParam.replace('person_', '');
+  }
+
+  // 3. Try hash parameter as fallback
+  const hash = window.location.hash;
+  if (hash.includes('person=')) {
+    const match = hash.match(/person=([a-f0-9-]+)/);
+    if (match) {
+      return match[1];
+    }
+  }
+
   return null;
 };
