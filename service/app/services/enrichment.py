@@ -383,7 +383,7 @@ class EnrichmentService:
             return value
         return []
 
-    def _safe_str(self, value) -> str | None:
+    def _safe_str(self, value) -> Optional[str]:
         """
         Safely get string value from PDL field.
 

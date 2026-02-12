@@ -30,6 +30,10 @@ class Settings(BaseSettings):
     questions_pause_days_after_dismisses: int = 7
     questions_max_consecutive_dismisses: int = 3
 
+    # Test mode (for automated testing)
+    test_mode_enabled: bool = False
+    test_auth_secret: str = ""
+
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"

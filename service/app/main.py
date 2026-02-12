@@ -59,6 +59,40 @@ async def health_check():
     }
 
 
+@app.get("/health/deep")
+async def deep_health_check():
+    """
+    Deep health check - verifies all external integrations.
+    Safe to call anytime, useful for automated testing.
+    """
+    import openai
+    from app.supabase_client import get_supabase_admin
+
+    settings = get_settings()
+    checks = {}
+
+    # Check Supabase
+    try:
+        supabase = get_supabase_admin()
+        supabase.table("person").select("person_id").limit(1).execute()
+        checks["supabase"] = "ok"
+    except Exception as e:
+        print(f"[HEALTH] Supabase check failed: {e}")
+        checks["supabase"] = "error"
+
+    # Check OpenAI (using models.list - cheaper than chat completion)
+    try:
+        client = openai.OpenAI(api_key=settings.openai_api_key)
+        models = client.models.list()
+        checks["openai"] = "ok" if models.data else "error"
+    except Exception as e:
+        print(f"[HEALTH] OpenAI check failed: {e}")
+        checks["openai"] = "error"
+
+    healthy = all(v == "ok" for v in checks.values())
+    return {"healthy": healthy, "checks": checks}
+
+
 @app.get("/")
 async def root():
     """Root endpoint."""

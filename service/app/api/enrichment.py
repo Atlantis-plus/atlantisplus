@@ -4,6 +4,7 @@ Enrichment API
 Endpoints for enriching person profiles with external data.
 """
 
+from typing import Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
@@ -21,7 +22,7 @@ class QuotaResponse(BaseModel):
     monthly_used: int
     monthly_limit: int
     can_enrich: bool
-    reason: str | None
+    reason: Optional[str]
 
 
 class EnrichResponse(BaseModel):
@@ -29,7 +30,7 @@ class EnrichResponse(BaseModel):
     person_id: str
     assertions_created: int
     identities_created: int
-    error: str | None
+    error: Optional[str]
 
 
 class EnrichmentDetails(BaseModel):
@@ -41,9 +42,9 @@ class EnrichmentDetails(BaseModel):
 
 class StatusResponse(BaseModel):
     status: str  # 'enriched' | 'not_enriched' | 'processing' | 'error'
-    last_enriched_at: str | None
-    enrichment_details: EnrichmentDetails | None = None
-    last_job: dict | None
+    last_enriched_at: Optional[str]
+    enrichment_details: Optional[EnrichmentDetails] = None
+    last_job: Optional[dict]
 
 
 @router.get("/quota", response_model=QuotaResponse)

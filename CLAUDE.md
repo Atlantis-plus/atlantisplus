@@ -859,6 +859,53 @@ Mini App URL: https://evgenyq.github.io/atlantisplus/
 
 ---
 
+## Automated Testing (for Claude Code agents)
+
+### Quick Health Check (always available)
+```bash
+# Check if all integrations work (Supabase + OpenAI)
+curl https://atlantisplus-production.up.railway.app/health/deep
+# Returns: {"healthy": true, "checks": {"supabase": "ok", "openai": "ok"}}
+```
+
+### Local Testing with Test Auth
+```bash
+# 1. Start server with test mode enabled
+cd /Users/evgenyq/Projects/atlantisplus/service && \
+  source venv/bin/activate && \
+  ENVIRONMENT=test TEST_MODE_ENABLED=true TEST_AUTH_SECRET=***REMOVED*** \
+  uvicorn app.main:app --port 8000
+
+# 2. Get test token (bypasses Telegram HMAC validation)
+curl -X POST http://localhost:8000/auth/telegram/test \
+  -H "Content-Type: application/json" \
+  -H "X-Test-Secret: ***REMOVED***" \
+  -d '{"telegram_id": 123456}'
+
+# 3. Use token for authenticated API calls
+curl -X POST http://localhost:8000/search \
+  -H "Authorization: Bearer <access_token_from_step_2>" \
+  -H "Content-Type: application/json" \
+  -d '{"query": "test query"}'
+```
+
+### Test Endpoint Security (3-gate approach)
+The `/auth/telegram/test` endpoint is protected by:
+1. **Environment whitelist**: Only works in `test`, `development`, `local` (returns 404 in production)
+2. **Test mode flag**: `TEST_MODE_ENABLED=true` env var required
+3. **Secret header**: `X-Test-Secret` header must match `TEST_AUTH_SECRET`
+
+All gates return 404 on failure to hide the endpoint's existence.
+
+### Environment Variables for Testing
+```env
+ENVIRONMENT=test           # Must be test/development/local
+TEST_MODE_ENABLED=true     # Enable test auth endpoint
+TEST_AUTH_SECRET=your-secret  # Required for X-Test-Secret header
+```
+
+---
+
 ## Как начать в Claude Code
 
 ```

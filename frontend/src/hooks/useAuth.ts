@@ -67,7 +67,57 @@ export const useAuth = () => {
           displayName: authResponse.display_name
         });
       } else {
-        // Not in Telegram Mini App - dev mode
+        // Not in Telegram Mini App - E2E/dev mode with test auth
+        const testSecret = import.meta.env.VITE_TEST_AUTH_SECRET || '';
+        const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+
+        console.log('[DEV] Test auth mode:', { testSecret: testSecret ? 'set' : 'not set', apiUrl });
+
+        if (testSecret) {
+          try {
+            console.log('[DEV] Calling test auth endpoint...');
+            const response = await fetch(`${apiUrl}/auth/telegram/test`, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'X-Test-Secret': testSecret,
+              },
+              body: JSON.stringify({
+                telegram_id: 999999999,
+                username: 'e2e_test_user',
+                first_name: 'E2E',
+                last_name: 'Test'
+              }),
+            });
+
+            console.log('[DEV] Response status:', response.status);
+            if (response.ok) {
+              const authResponse = await response.json();
+              console.log('[DEV] Auth response received:', { telegram_id: authResponse.telegram_id, display_name: authResponse.display_name });
+              const session = await setSupabaseSession(
+                authResponse.access_token,
+                authResponse.refresh_token
+              );
+              console.log('[DEV] setSupabaseSession result:', session ? 'success' : 'null');
+
+              if (session) {
+                api.setAccessToken(authResponse.access_token);
+                setState({
+                  session,
+                  loading: false,
+                  error: null,
+                  telegramId: authResponse.telegram_id,
+                  displayName: authResponse.display_name
+                });
+                return;
+              }
+            }
+          } catch (e) {
+            console.error('[DEV] Test auth failed:', e);
+          }
+        }
+
+        // Fallback if test auth fails or no secret
         setState({
           session: null,
           loading: false,

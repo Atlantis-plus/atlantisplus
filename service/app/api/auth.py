@@ -3,7 +3,9 @@ import hmac
 import json
 from urllib.parse import parse_qsl
 
-from fastapi import APIRouter, HTTPException
+from typing import Optional
+
+from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel
 
 from app.config import get_settings
@@ -11,9 +13,19 @@ from app.supabase_client import get_supabase_admin
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
+# Whitelist of environments where test auth is allowed
+ALLOWED_TEST_ENVIRONMENTS = frozenset({"test", "development", "local"})
+
 
 class TelegramAuthRequest(BaseModel):
     init_data: str
+
+
+class TestAuthRequest(BaseModel):
+    telegram_id: Optional[int] = None
+    username: Optional[str] = None
+    first_name: Optional[str] = "Test"
+    last_name: Optional[str] = "User"
 
 
 class TelegramAuthResponse(BaseModel):
@@ -126,6 +138,92 @@ async def auth_telegram(request: TelegramAuthRequest):
             raise HTTPException(
                 status_code=500,
                 detail=f"Failed to create/authenticate user: {str(e)}"
+            )
+
+    session = auth_response.session
+    if not session:
+        raise HTTPException(status_code=500, detail="Failed to create session")
+
+    return TelegramAuthResponse(
+        access_token=session.access_token,
+        refresh_token=session.refresh_token,
+        user_id=session.user.id,
+        telegram_id=telegram_id,
+        display_name=display_name
+    )
+
+
+@router.post("/telegram/test", response_model=TelegramAuthResponse)
+async def auth_telegram_test(
+    request: TestAuthRequest,
+    x_test_secret: Optional[str] = Header(None, alias="X-Test-Secret")
+):
+    """
+    Test authentication endpoint for automated testing.
+
+    Secured with 3 gates:
+    1. Environment whitelist (not production)
+    2. test_mode_enabled flag
+    3. X-Test-Secret header
+
+    Returns real Supabase session for testing API endpoints.
+    """
+    settings = get_settings()
+
+    # Gate 1: Environment whitelist
+    if settings.environment not in ALLOWED_TEST_ENVIRONMENTS:
+        raise HTTPException(status_code=404, detail="Not found")
+
+    # Gate 2: Test mode must be enabled
+    if not settings.test_mode_enabled:
+        raise HTTPException(status_code=404, detail="Not found")
+
+    # Gate 3: Secret header validation
+    if not settings.test_auth_secret or not x_test_secret:
+        raise HTTPException(status_code=404, detail="Not found")
+    if not hmac.compare_digest(x_test_secret, settings.test_auth_secret):
+        raise HTTPException(status_code=404, detail="Not found")
+
+    # Generate test user credentials
+    telegram_id = request.telegram_id or 999999999
+    username = request.username or "test_user"
+    first_name = request.first_name or "Test"
+    last_name = request.last_name or "User"
+    display_name = f"{first_name} {last_name}".strip()
+
+    # Create fake email for Supabase Auth
+    fake_email = f"tg_{telegram_id}@atlantis.local"
+    fake_password = f"tg_auth_{telegram_id}_{settings.telegram_bot_token[:10]}"
+
+    supabase = get_supabase_admin()
+
+    # Try to sign in or create user
+    try:
+        auth_response = supabase.auth.sign_in_with_password({
+            "email": fake_email,
+            "password": fake_password
+        })
+    except Exception:
+        try:
+            supabase.auth.admin.create_user({
+                "email": fake_email,
+                "password": fake_password,
+                "email_confirm": True,
+                "user_metadata": {
+                    "telegram_id": telegram_id,
+                    "telegram_username": username,
+                    "display_name": display_name,
+                    "is_test_user": True
+                }
+            })
+            auth_response = supabase.auth.sign_in_with_password({
+                "email": fake_email,
+                "password": fake_password
+            })
+        except Exception as e:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to create/authenticate test user: {str(e)}"
             )
 
     session = auth_response.session
