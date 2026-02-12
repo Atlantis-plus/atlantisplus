@@ -503,7 +503,7 @@ export const HomePage = ({ onNavigate }: HomePageProps) => {
           {activeTab === 'linkedin' && (
             <div className="card-neo p-5">
               <div className="flex items-center gap-3 mb-4">
-                <div className="p-2 border-3 border-black" style={{ backgroundColor: 'var(--accent-primary)' }}>
+                <div className="p-2 border-2 border-black" style={{ backgroundColor: 'var(--accent-primary)' }}>
                   <LinkedInIcon size={20} className="text-white" />
                 </div>
                 <h2 className="font-heading text-xl font-bold" style={{ color: 'var(--text-primary)' }}>
@@ -553,7 +553,7 @@ export const HomePage = ({ onNavigate }: HomePageProps) => {
                   </div>
 
                   {/* Progress bar */}
-                  <div className="h-4 border-3 border-black bg-white mb-3 overflow-hidden">
+                  <div className="h-4 border-2 border-black bg-white mb-3 overflow-hidden">
                     <div
                       className="h-full animate-pulse"
                       style={{
@@ -576,7 +576,7 @@ export const HomePage = ({ onNavigate }: HomePageProps) => {
                   </p>
 
                   {linkedInProgress.error && (
-                    <div className="mt-3 p-3 border-3 border-black flex items-center gap-2" style={{ backgroundColor: 'var(--accent-danger)' }}>
+                    <div className="mt-3 p-3 border-2 border-black flex items-center gap-2" style={{ backgroundColor: 'var(--accent-danger)' }}>
                       <ErrorCircleIcon size={16} className="text-white flex-shrink-0" />
                       <span className="text-white text-sm">{linkedInProgress.error}</span>
                     </div>
@@ -599,7 +599,7 @@ export const HomePage = ({ onNavigate }: HomePageProps) => {
                   <label
                     htmlFor="linkedin-upload"
                     className={`card-neo p-8 flex flex-col items-center gap-3 cursor-pointer transition-all ${
-                      linkedInLoading ? 'opacity-50 cursor-not-allowed' : 'hover:translate-x-[-2px] hover:translate-y-[-2px] hover:shadow-[6px_6px_0_var(--shadow-color)]'
+                      linkedInLoading ? 'opacity-50 cursor-not-allowed' : 'hover:translate-x-[-1px] hover:translate-y-[-1px] hover:shadow-[3px_3px_0_var(--shadow-color)]'
                     }`}
                     style={{ borderStyle: 'dashed', backgroundColor: 'var(--bg-card)' }}
                   >
@@ -876,7 +876,7 @@ export const HomePage = ({ onNavigate }: HomePageProps) => {
           {activeTab === 'calendar' && (
             <div className="card-neo p-5">
               <div className="flex items-center gap-3 mb-4">
-                <div className="p-2 border-3 border-black" style={{ backgroundColor: 'var(--accent-danger)' }}>
+                <div className="p-2 border-2 border-black" style={{ backgroundColor: 'var(--accent-danger)' }}>
                   <CalendarIcon size={20} className="text-white" />
                 </div>
                 <h2 className="font-heading text-xl font-bold" style={{ color: 'var(--text-primary)' }}>
@@ -942,7 +942,7 @@ export const HomePage = ({ onNavigate }: HomePageProps) => {
                   <label
                     htmlFor="calendar-upload"
                     className={`card-neo p-8 flex flex-col items-center gap-3 cursor-pointer transition-all ${
-                      calendarLoading ? 'opacity-50 cursor-not-allowed' : 'hover:translate-x-[-2px] hover:translate-y-[-2px] hover:shadow-[6px_6px_0_var(--shadow-color)]'
+                      calendarLoading ? 'opacity-50 cursor-not-allowed' : 'hover:translate-x-[-1px] hover:translate-y-[-1px] hover:shadow-[3px_3px_0_var(--shadow-color)]'
                     }`}
                     style={{ borderStyle: 'dashed', backgroundColor: 'var(--bg-card)' }}
                   >

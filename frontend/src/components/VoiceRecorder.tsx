@@ -158,7 +158,7 @@ export const VoiceRecorder = ({ userId, onProcessingStarted, onError }: VoiceRec
         /* Uploading state */
         <div className="flex flex-col items-center gap-3">
           <div
-            className="w-20 h-20 flex items-center justify-center rounded-full bg-[var(--bg-card)] border-3 border-[var(--border-color)]"
+            className="w-20 h-20 flex items-center justify-center rounded-full bg-[var(--bg-card)] border-2 border-[var(--border-color)]"
             style={{ boxShadow: '4px 4px 0 var(--shadow-color)' }}
           >
             <SpinnerIcon size={32} className="text-[var(--accent-primary)]" />
@@ -193,7 +193,7 @@ export const VoiceRecorder = ({ userId, onProcessingStarted, onError }: VoiceRec
       ) : (
         /* Idle state - large record button */
         <button
-          className="w-20 h-20 flex items-center justify-center rounded-full bg-[var(--accent-primary)] border-3 border-[var(--border-color)] cursor-pointer transition-transform duration-100 hover:translate-x-[-2px] hover:translate-y-[-2px] active:translate-x-[2px] active:translate-y-[2px]"
+          className="w-20 h-20 flex items-center justify-center rounded-full bg-[var(--accent-primary)] border-2 border-[var(--border-color)] cursor-pointer transition-transform duration-100 hover:translate-x-[-1px] hover:translate-y-[-1px] active:translate-x-[1px] active:translate-y-[1px]"
           style={{
             boxShadow: '4px 4px 0 var(--shadow-color)',
           }}

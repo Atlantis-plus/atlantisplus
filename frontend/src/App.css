@@ -111,7 +111,7 @@
   right: 0;
   display: flex;
   background: var(--bg-cream, #FFF8E7);
-  border-top: 3px solid var(--border-color, #1a1a1a);
+  border-top: 2px solid var(--border-color, #1a1a1a);
   padding: 0.625rem 0;
   padding-bottom: max(0.625rem, env(safe-area-inset-bottom));
   z-index: 100;

@@ -840,7 +840,7 @@ export const PeoplePage = ({ initialPersonId, onInitialPersonIdConsumed }: Peopl
                   {/* Avatar */}
                   <div className={`
                     w-12 h-12 flex-shrink-0 flex items-center justify-center
-                    text-xl font-bold border-3 border-black
+                    text-xl font-bold border-2 border-black
                     ${isOwn ? 'bg-mint' : 'bg-lavender'}
                   `}>
                     {person.display_name.charAt(0).toUpperCase()}

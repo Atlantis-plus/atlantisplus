@@ -226,7 +226,7 @@ export const SearchPage = () => {
                   <div className="flex items-center gap-3 mb-3">
                     {/* Avatar */}
                     <div
-                      className="w-12 h-12 flex items-center justify-center border-3 border-black font-heading font-bold text-lg"
+                      className="w-12 h-12 flex items-center justify-center border-2 border-black font-heading font-bold text-lg"
                       style={{
                         backgroundColor: 'var(--accent-primary)',
                         color: '#FFFFFF',

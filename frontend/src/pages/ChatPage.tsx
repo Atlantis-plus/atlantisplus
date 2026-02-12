@@ -163,10 +163,10 @@ export function ChatPage() {
                 {sessions.map(s => (
                   <button
                     key={s.session_id}
-                    className={`flex items-center justify-between p-3 text-left border-3 border-[var(--border-color)] transition-all ${
+                    className={`flex items-center justify-between p-3 text-left border-2 border-[var(--border-color)] transition-all ${
                       sessionId === s.session_id
-                        ? 'bg-[var(--accent-primary)] text-white shadow-[4px_4px_0_var(--shadow-color)]'
-                        : 'bg-[var(--bg-card)] hover:bg-[var(--bg-secondary)] hover:shadow-[4px_4px_0_var(--shadow-color)]'
+                        ? 'bg-[var(--accent-primary)] text-white shadow-[1px_1px_0_var(--shadow-color)]'
+                        : 'bg-[var(--bg-card)] hover:bg-[var(--bg-secondary)] hover:shadow-[1px_1px_0_var(--shadow-color)]'
                     }`}
                     onClick={() => loadSession(s.session_id)}
                   >
@@ -192,7 +192,7 @@ export function ChatPage() {
             {/* Welcome Card */}
             <div className="card-neo p-6 max-w-sm w-full">
               <div className="flex justify-center mb-4">
-                <div className="p-3 bg-[var(--accent-primary)] border-3 border-[var(--border-color)] shadow-[4px_4px_0_var(--shadow-color)]">
+                <div className="p-3 bg-[var(--accent-primary)] border-2 border-[var(--border-color)] shadow-[1px_1px_0_var(--shadow-color)]">
                   <RobotIcon size={32} className="text-white" />
                 </div>
               </div>
@@ -206,7 +206,7 @@ export function ChatPage() {
                 {exampleQueries.map((q, i) => (
                   <button
                     key={i}
-                    className="badge-neo text-left py-2 px-3 text-xs normal-case tracking-normal cursor-pointer hover:translate-x-1 hover:translate-y-1 hover:shadow-[2px_2px_0_var(--shadow-color)] active:translate-x-1 active:translate-y-1 active:shadow-none transition-all"
+                    className="badge-neo text-left py-2 px-3 text-xs normal-case tracking-normal cursor-pointer hover:translate-x-1 hover:translate-y-1 hover:shadow-[1px_1px_0_var(--shadow-color)] active:translate-x-1 active:translate-y-1 active:shadow-none transition-all"
                     onClick={() => setInput(q)}
                   >
                     {q}
@@ -225,7 +225,7 @@ export function ChatPage() {
                 <div
                   className={`max-w-[85%] ${
                     msg.role === 'user'
-                      ? 'bg-[var(--accent-primary)] text-white border-3 border-[var(--border-color)] shadow-[4px_4px_0_var(--shadow-color)] p-3'
+                      ? 'bg-[var(--accent-primary)] text-white border-2 border-[var(--border-color)] shadow-[1px_1px_0_var(--shadow-color)] p-3'
                       : 'card-neo border-l-[6px] border-l-[var(--accent-primary)]'
                   }`}
                 >

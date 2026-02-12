@@ -36,27 +36,27 @@
   --font-heading: 'Space Grotesk', ui-sans-serif, system-ui, sans-serif;
   --font-body: 'Inter', ui-sans-serif, system-ui, sans-serif;
 
-  /* Border widths */
+  /* Border widths - slightly thinner for softer look */
+  --border-width-2: 2px;
   --border-width-3: 3px;
-  --border-width-5: 5px;
-  --border-width-6: 6px;
+  --border-width-4: 4px;
 
-  /* Box shadows (neobrutalism style) */
-  --shadow-neo-sm: 2px 2px 0 var(--shadow-color, #000000);
-  --shadow-neo: 4px 4px 0 var(--shadow-color, #000000);
-  --shadow-neo-lg: 6px 6px 0 var(--shadow-color, #000000);
+  /* Box shadows (softer neobrutalism) */
+  --shadow-neo-sm: 1px 1px 0 var(--shadow-color, #000000);
+  --shadow-neo: 2px 2px 0 var(--shadow-color, #000000);
+  --shadow-neo-lg: 3px 3px 0 var(--shadow-color, #000000);
 
-  /* Animations */
-  --animate-neo-slide-up: neo-slide-up 0.3s ease-out;
-  --animate-neo-pop: neo-pop 0.2s ease-out;
-  --animate-neo-pulse: neo-pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+  /* Animations - mellow, subtle */
+  --animate-neo-slide-up: neo-slide-up 0.25s ease-out;
+  --animate-neo-pop: neo-pop 0.15s ease-out;
+  --animate-neo-pulse: neo-pulse 2.5s cubic-bezier(0.4, 0, 0.6, 1) infinite;
 }
 
-/* Keyframes for animations */
+/* Keyframes for animations - mellow, barely noticeable */
 @keyframes neo-slide-up {
   from {
     opacity: 0;
-    transform: translateY(8px);
+    transform: translateY(4px);
   }
   to {
     opacity: 1;
@@ -66,10 +66,10 @@
 
 @keyframes neo-pop {
   0% {
-    transform: scale(0.95);
+    transform: scale(0.98);
   }
   50% {
-    transform: scale(1.02);
+    transform: scale(1.01);
   }
   100% {
     transform: scale(1);
@@ -81,7 +81,7 @@
     opacity: 1;
   }
   50% {
-    opacity: 0.7;
+    opacity: 0.85;
   }
 }
 
@@ -175,7 +175,7 @@
    NEOBRUTALISM COMPONENT CLASSES
    ============================================ */
 
-/* Base button with neobrutalism style */
+/* Base button with neobrutalism style - softer variant */
 .btn-neo {
   display: inline-flex;
   align-items: center;
@@ -187,21 +187,21 @@
   font-size: 0.875rem;
   color: var(--text-primary);
   background-color: var(--bg-card);
-  border: 3px solid var(--border-color);
-  box-shadow: 4px 4px 0 var(--shadow-color);
+  border: 2px solid var(--border-color);
+  box-shadow: 2px 2px 0 var(--shadow-color);
   cursor: pointer;
-  transition: transform 0.1s ease, box-shadow 0.1s ease;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
   user-select: none;
 }
 
 .btn-neo:hover:not(:disabled) {
-  transform: translate(-2px, -2px);
-  box-shadow: 6px 6px 0 var(--shadow-color);
+  transform: translate(-1px, -1px);
+  box-shadow: 3px 3px 0 var(--shadow-color);
 }
 
 .btn-neo:active:not(:disabled) {
-  transform: translate(2px, 2px);
-  box-shadow: 2px 2px 0 var(--shadow-color);
+  transform: translate(1px, 1px);
+  box-shadow: 1px 1px 0 var(--shadow-color);
 }
 
 .btn-neo:disabled {
@@ -227,35 +227,35 @@
   color: #FFFFFF;
 }
 
-/* Card with neobrutalism style */
+/* Card with neobrutalism style - softer variant */
 .card-neo {
   background-color: var(--bg-card);
-  border: 3px solid var(--border-color);
-  box-shadow: 4px 4px 0 var(--shadow-color);
+  border: 2px solid var(--border-color);
+  box-shadow: 2px 2px 0 var(--shadow-color);
   padding: 1rem;
 }
 
-/* Interactive card with hover effects */
+/* Interactive card with hover effects - subtle */
 .card-neo-interactive {
   background-color: var(--bg-card);
-  border: 3px solid var(--border-color);
-  box-shadow: 4px 4px 0 var(--shadow-color);
+  border: 2px solid var(--border-color);
+  box-shadow: 2px 2px 0 var(--shadow-color);
   padding: 1rem;
   cursor: pointer;
-  transition: transform 0.1s ease, box-shadow 0.1s ease;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
 }
 
 .card-neo-interactive:hover {
-  transform: translate(-2px, -2px);
-  box-shadow: 6px 6px 0 var(--shadow-color);
+  transform: translate(-1px, -1px);
+  box-shadow: 3px 3px 0 var(--shadow-color);
 }
 
 .card-neo-interactive:active {
-  transform: translate(2px, 2px);
-  box-shadow: 2px 2px 0 var(--shadow-color);
+  transform: translate(1px, 1px);
+  box-shadow: 1px 1px 0 var(--shadow-color);
 }
 
-/* Input field with thick border */
+/* Input field with border - softer */
 .input-neo {
   width: 100%;
   padding: 0.75rem 1rem;
@@ -263,9 +263,9 @@
   font-size: 1rem;
   color: var(--text-primary);
   background-color: var(--bg-card);
-  border: 3px solid var(--border-color);
+  border: 2px solid var(--border-color);
   outline: none;
-  transition: box-shadow 0.1s ease;
+  transition: box-shadow 0.15s ease;
 }
 
 .input-neo::placeholder {
@@ -273,7 +273,7 @@
 }
 
 .input-neo:focus {
-  box-shadow: 4px 4px 0 var(--shadow-color);
+  box-shadow: 2px 2px 0 var(--shadow-color);
 }
 
 /* Textarea variant */
@@ -282,7 +282,7 @@ textarea.input-neo {
   min-height: 100px;
 }
 
-/* Badge/tag component */
+/* Badge/tag component - subtle */
 .badge-neo {
   display: inline-flex;
   align-items: center;
@@ -294,8 +294,8 @@ textarea.input-neo {
   letter-spacing: 0.025em;
   color: var(--text-primary);
   background-color: var(--bg-card);
-  border: 2px solid var(--border-color);
-  box-shadow: 2px 2px 0 var(--shadow-color);
+  border: 1.5px solid var(--border-color);
+  box-shadow: 1px 1px 0 var(--shadow-color);
 }
 
 /* Badge color variants */
