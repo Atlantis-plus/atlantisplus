@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { initTelegram, isTelegramMiniApp } from './lib/telegram';
+import { initTelegram, isTelegramMiniApp, parsePersonDeeplink } from './lib/telegram';
 import { useAuth } from './hooks/useAuth';
 import { HomePage } from './pages/HomePage';
 import { NotesPage } from './pages/NotesPage';
@@ -12,11 +12,20 @@ type Page = 'home' | 'notes' | 'search' | 'people' | 'chat';
 
 function App() {
   const [currentPage, setCurrentPage] = useState<Page>('home');
+  // Person ID from deeplink - when set, PeoplePage will open this person's profile directly
+  const [initialPersonId, setInitialPersonId] = useState<string | null>(null);
   const { isAuthenticated, loading } = useAuth();
 
   useEffect(() => {
     if (isTelegramMiniApp()) {
       initTelegram();
+
+      // Check for person deeplink (e.g., t.me/bot/app?startapp=person_abc123)
+      const personId = parsePersonDeeplink();
+      if (personId) {
+        setInitialPersonId(personId);
+        setCurrentPage('people');
+      }
     }
   }, []);
 
@@ -28,12 +37,22 @@ function App() {
     );
   }
 
+  // Clear initialPersonId after PeoplePage has used it
+  const handlePersonIdConsumed = () => {
+    setInitialPersonId(null);
+  };
+
   const renderPage = () => {
     switch (currentPage) {
       case 'notes':
         return <NotesPage />;
       case 'people':
-        return <PeoplePage />;
+        return (
+          <PeoplePage
+            initialPersonId={initialPersonId}
+            onInitialPersonIdConsumed={handlePersonIdConsumed}
+          />
+        );
       case 'search':
         return <SearchPage />;
       case 'chat':

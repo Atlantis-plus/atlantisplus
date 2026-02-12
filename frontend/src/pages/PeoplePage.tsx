@@ -31,7 +31,14 @@ interface Assertion {
   confidence: number;
 }
 
-export const PeoplePage = () => {
+interface PeoplePageProps {
+  /** Person ID from deeplink - if provided, will open this person's profile directly */
+  initialPersonId?: string | null;
+  /** Callback when initialPersonId has been consumed (used for navigation) */
+  onInitialPersonIdConsumed?: () => void;
+}
+
+export const PeoplePage = ({ initialPersonId, onInitialPersonIdConsumed }: PeoplePageProps) => {
   const { isAuthenticated, session } = useAuth();
   const [people, setPeople] = useState<Person[]>([]);
   const [selectedPerson, setSelectedPerson] = useState<Person | null>(null);
@@ -71,6 +78,20 @@ export const PeoplePage = () => {
       fetchPeople();
     }
   }, [isAuthenticated]);
+
+  // Handle deeplink: auto-open person profile when initialPersonId is provided
+  useEffect(() => {
+    if (initialPersonId && !loading && people.length > 0) {
+      // Find the person by ID
+      const person = people.find(p => p.person_id === initialPersonId);
+      if (person) {
+        // Open their profile
+        handlePersonClick(person);
+      }
+      // Mark the initialPersonId as consumed (even if not found, to prevent infinite loop)
+      onInitialPersonIdConsumed?.();
+    }
+  }, [initialPersonId, loading, people]);
 
   const fetchPeople = async () => {
     setLoading(true);
