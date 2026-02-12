@@ -4,14 +4,13 @@ import { useAuth } from './hooks/useAuth';
 import { HomePage } from './pages/HomePage';
 import { NotesPage } from './pages/NotesPage';
 import { PeoplePage } from './pages/PeoplePage';
-import { SearchPage } from './pages/SearchPage';
 import { ChatPage } from './pages/ChatPage';
 import './App.css';
 
-type Page = 'home' | 'notes' | 'search' | 'people' | 'chat';
+type Page = 'people' | 'notes' | 'chat' | 'import';
 
 function App() {
-  const [currentPage, setCurrentPage] = useState<Page>('home');
+  const [currentPage, setCurrentPage] = useState<Page>('people');
   // Person ID from deeplink - when set, PeoplePage will open this person's profile directly
   const [initialPersonId, setInitialPersonId] = useState<string | null>(null);
   const { isAuthenticated, loading } = useAuth();
@@ -46,20 +45,18 @@ function App() {
     switch (currentPage) {
       case 'notes':
         return <NotesPage />;
+      case 'chat':
+        return <ChatPage />;
+      case 'import':
+        return <HomePage onNavigate={setCurrentPage} />;
       case 'people':
+      default:
         return (
           <PeoplePage
             initialPersonId={initialPersonId}
             onInitialPersonIdConsumed={handlePersonIdConsumed}
           />
         );
-      case 'search':
-        return <SearchPage />;
-      case 'chat':
-        return <ChatPage />;
-      case 'home':
-      default:
-        return <HomePage onNavigate={setCurrentPage} />;
     }
   };
 
@@ -71,11 +68,11 @@ function App() {
       {isAuthenticated && (
         <nav className="bottom-nav">
           <button
-            className={`nav-btn ${currentPage === 'home' ? 'active' : ''}`}
-            onClick={() => setCurrentPage('home')}
+            className={`nav-btn ${currentPage === 'people' ? 'active' : ''}`}
+            onClick={() => setCurrentPage('people')}
           >
-            <span className="nav-icon">🏠</span>
-            <span className="nav-label">Home</span>
+            <span className="nav-icon">👥</span>
+            <span className="nav-label">People</span>
           </button>
           <button
             className={`nav-btn ${currentPage === 'notes' ? 'active' : ''}`}
@@ -92,11 +89,11 @@ function App() {
             <span className="nav-label">Chat</span>
           </button>
           <button
-            className={`nav-btn ${currentPage === 'people' ? 'active' : ''}`}
-            onClick={() => setCurrentPage('people')}
+            className={`nav-btn ${currentPage === 'import' ? 'active' : ''}`}
+            onClick={() => setCurrentPage('import')}
           >
-            <span className="nav-icon">👥</span>
-            <span className="nav-label">People</span>
+            <span className="nav-icon">📥</span>
+            <span className="nav-label">Import</span>
           </button>
         </nav>
       )}

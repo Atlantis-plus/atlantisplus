@@ -4,7 +4,7 @@ import { api } from '../lib/api';
 import { openExternalLink } from '../lib/telegram';
 import { supabase } from '../lib/supabase';
 
-type Page = 'home' | 'notes' | 'search' | 'people' | 'chat';
+type Page = 'people' | 'notes' | 'chat' | 'import';
 
 interface HomePageProps {
   onNavigate?: (page: Page) => void;
@@ -454,8 +454,8 @@ export const HomePage = ({ onNavigate }: HomePageProps) => {
   return (
     <div className="page">
       <header className="header">
-        <h1>Atlantis Plus</h1>
-        <p className="subtitle">Personal Network Memory</p>
+        <h1>Import Contacts</h1>
+        <p className="subtitle">LinkedIn & Calendar</p>
       </header>
 
       <main className="main">
