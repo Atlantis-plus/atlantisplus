@@ -22,6 +22,48 @@
 
 ---
 
+## CRITICAL RULE: Testing Requirements
+
+**Фича НЕ считается готовой пока не пройден E2E тест через реальный user flow.**
+
+### Что НЕ является доказательством работоспособности:
+- ❌ "Данные есть в базе" (SELECT возвращает строки)
+- ❌ "Код добавлен" (функция написана)
+- ❌ "SQL тест прошёл" (запрос к БД работает)
+- ❌ "Синтаксис валидный" (python -m py_compile OK)
+
+### Что ЯВЛЯЕТСЯ доказательством:
+- ✅ Пользователь может выполнить действие через UI/API и получить ожидаемый результат
+- ✅ E2E тест проходит: запрос → API → ответ соответствует ожиданиям
+
+### Обязательный чеклист для QA агентов:
+
+```
+[ ] 1. Запустить backend сервис
+[ ] 2. Выполнить действие как пользователь (через API или UI)
+[ ] 3. Проверить что ответ содержит ожидаемые данные
+[ ] 4. Если тест падает — это НЕ "тест прошёл", даже если данные есть в базе
+```
+
+### Пример НЕПРАВИЛЬНОГО теста:
+```sql
+-- "Проверим что ByteDance люди есть"
+SELECT * FROM assertion WHERE object_value ILIKE '%ByteDance%';
+-- Результат: 5 строк → "тест прошёл" ❌ НЕПРАВИЛЬНО
+```
+
+### Пример ПРАВИЛЬНОГО теста:
+```
+1. POST /chat с телом {"message": "кто из ByteDance"}
+2. Проверить что response.message содержит имена людей
+3. Если timeout/error — тест ПРОВАЛЕН, даже если данные есть в базе
+```
+
+### Почему это важно:
+Данные в базе ≠ данные доступны пользователю. Между ними: API, embeddings, RPC функции, timeouts, порядок операций. Любой из этих слоёв может сломаться.
+
+---
+
 ## Что мы строим (одним абзацем)
 
 **AI-first Personal Network Memory** — приватный агент, который помогает power-коннекторам помнить свой нетворк и находить нужных людей под конкретные задачи. Пользователь надиктовывает или пишет заметки о людях, которых знает. Агент извлекает структурированные данные (люди, связи, компетенции, контекст), сохраняет в граф, и потом отвечает на вопросы вроде «кто может помочь с выходом на фарм-компании в Сингапуре?» — с reasoning, а не просто списком.
@@ -705,6 +747,71 @@ VITE_SUPABASE_URL=https://xxx.supabase.co
 VITE_SUPABASE_ANON_KEY=eyJ...
 VITE_API_URL=https://your-service.railway.app
 ```
+
+---
+
+## Supabase Free Tier — Rate Limiting Rules
+
+**CRITICAL**: The project uses Supabase free tier which can become unhealthy under load.
+
+### Rules for agents (QA, Explore, etc.):
+1. **Max 3 concurrent SQL queries** — never run more than 3 parallel database requests
+2. **Add delays between queries** — wait 500ms-1s between sequential queries
+3. **Batch operations** — prefer single queries with JOINs over multiple separate queries
+4. **Timeout handling** — if you get Error 522 (Connection timeout), STOP making requests and report the issue
+5. **No stress testing** — never intentionally load-test the database
+
+### If database becomes unhealthy:
+1. Stop all database operations immediately
+2. Wait 5-10 minutes for auto-recovery
+3. If still unhealthy — user needs to restart project in Supabase Dashboard
+4. Report the issue to user before continuing
+
+### Example of BAD pattern:
+```python
+# DON'T: 10 parallel queries
+for company in companies:
+    asyncio.create_task(query_company(company))  # ❌ Too many parallel
+```
+
+### Example of GOOD pattern:
+```python
+# DO: Sequential with delays
+for company in companies:
+    await query_company(company)
+    await asyncio.sleep(0.5)  # ✅ Rate limited
+```
+
+---
+
+## Процесс планирования
+
+### Обязательное ревью сложных планов
+
+**ПРАВИЛО**: Любой план, который предлагает:
+- Новые таблицы в БД
+- Изменение extraction pipeline
+- Новые сервисы или значительные API endpoints
+- Миграции данных
+- Архитектурные изменения
+
+**ДОЛЖЕН пройти критический анализ** через backend-architect агента с фокусом на:
+- Complexity Issues — где план усложнит систему?
+- Backfire scenarios — что может пойти не так?
+- Simpler alternatives — можно ли решить проще?
+- YAGNI check — нужно ли это сейчас для 3 пользователей?
+
+**Формат запуска**:
+```
+Task(subagent_type="backend-architect", prompt="""
+Проведи критический анализ плана [название] с фокусом на Complexity Issues.
+Прочитай план: [путь к файлу]
+Твоя задача — найти проблемы, а не хвалить план.
+...
+""")
+```
+
+**Результат ревью**: сохранять в том же документе или рядом с планом.
 
 ---
 

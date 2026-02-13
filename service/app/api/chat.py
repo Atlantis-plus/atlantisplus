@@ -19,6 +19,114 @@ from app.agents.prompts import SEARCH_FILTER_PROMPT
 
 router = APIRouter(tags=["chat"])
 
+# =============================================================================
+# COMPANY SEARCH: Predicate weights and extraction
+# =============================================================================
+
+# Predicate relevance weights for company-related queries
+COMPANY_PREDICATES = {
+    'works_at': 1.0,       # Direct employment - highest
+    'met_on': 0.8,         # Met at meeting/conference (e.g., "ByteDance meeting")
+    'knows': 0.7,          # Personal connection (may mention company)
+    'contact_context': 0.6,  # How we met (may mention company)
+    'worked_on': 0.5,      # Past projects (may mention company)
+    'background': 0.4,     # Career history
+}
+
+
+def normalize_company_name(name: str) -> str:
+    """
+    Normalize company name for matching. Must match SQL function.
+    Examples: "Google LLC" → "google", "Yandex N.V." → "yandex n.v"
+    """
+    if not name:
+        return ""
+
+    result = name.lower().strip()
+
+    # Remove common suffixes (must match SQL function)
+    result = re.sub(
+        r'\s*(inc\.?|llc\.?|ltd\.?|gmbh|corp\.?|corporation|company|co\.?|limited|plc|ag|sa|nv|n\.v\.)$',
+        '',
+        result,
+        flags=re.IGNORECASE
+    )
+
+    # Normalize whitespace
+    result = re.sub(r'\s+', ' ', result).strip()
+
+    return result
+
+
+def extract_company_from_query(query: str) -> Optional[str]:
+    """
+    Extract company name from query for multi-predicate search.
+
+    Examples:
+    - "кто из ByteDance" → "ByteDance"
+    - "кто работает в Google" → "Google"
+    - "интро в Яндекс" → "Яндекс"
+    - "who from Meta" → "Meta"
+    """
+    # Patterns for company extraction (Russian and English)
+    patterns = [
+        # "из/from/at/в/into + Company"
+        r'(?:из|from|at|в|во|into)\s+([A-ZА-Яa-zа-я][A-Za-zА-Яа-я0-9\.\-]+)',
+        # "компания/company + Name"
+        r'(?:компани[яию]|company)\s+([A-ZА-Яa-zа-я][A-Za-zА-Яа-я0-9\.\-]+)',
+        # "работает в/works at + Company"
+        r'(?:работает в|works? at|работают в)\s+([A-ZА-Яa-zа-я][A-Za-zА-Яа-я0-9\.\-]+)',
+        # Capitalized word with optional suffix (Google, Meta Inc, etc.)
+        r'([A-Z][A-Za-z0-9\.]+(?:\s+(?:Inc|LLC|Ltd|Corp|Bank))?)',
+    ]
+
+    for pattern in patterns:
+        match = re.search(pattern, query, re.IGNORECASE)
+        if match:
+            company = match.group(1).strip()
+            # Filter out common false positives
+            if company.lower() not in ('кто', 'who', 'что', 'where', 'как', 'the', 'a', 'an'):
+                return company
+
+    return None
+
+
+async def search_company_across_predicates(
+    company_name: str,
+    user_id: str,
+    supabase
+) -> dict[str, float]:
+    """
+    Search for company mentions across multiple predicates.
+    Returns dict of person_id -> weighted score.
+    """
+    person_scores: dict[str, float] = {}
+
+    for predicate, weight in COMPANY_PREDICATES.items():
+        # Search this predicate for company mention
+        try:
+            # Note: Results are filtered by owner_id later in find_people
+            matches = supabase.table('assertion').select(
+                'subject_person_id, predicate, object_value, confidence'
+            ).eq('predicate', predicate).ilike(
+                'object_value', f'%{company_name}%'
+            ).limit(100).execute()  # Limit to prevent overload
+
+            for match in matches.data or []:
+                pid = match['subject_person_id']
+                confidence = match.get('confidence', 0.5)
+                score = weight * confidence
+
+                # Keep best score for each person
+                if pid not in person_scores or score > person_scores[pid]:
+                    person_scores[pid] = score
+
+        except Exception as e:
+            print(f"[COMPANY_SEARCH] Error searching {predicate}: {e}")
+            continue
+
+    return person_scores
+
 
 class ChatRequest(BaseModel):
     message: str = Field(..., description="User message")
@@ -590,25 +698,49 @@ async def execute_tool(tool_name: str, args: dict, user_id: str) -> str:
 
             print(f"[FIND_PEOPLE] Name search found {len(name_result.data or [])} people")
 
-            # 2. Semantic search by assertions
-            query_embedding = generate_embedding(query)
-            match_result = supabase.rpc(
-                'match_assertions_community',
-                {
-                    'query_embedding': query_embedding,
-                    'match_threshold': 0.3,
-                    'match_count': 200
-                }
-            ).execute()
+            # 2. Company-specific search (fast, multi-predicate: works_at, met_on, knows, etc.)
+            company_name = extract_company_from_query(query)
+            company_matched_ids = set()  # Track company matches for boost later
+            if company_name:
+                print(f"[FIND_PEOPLE] Detected company query: '{company_name}'")
+                company_scores = await search_company_across_predicates(
+                    company_name, user_id, supabase
+                )
+                print(f"[FIND_PEOPLE] Company search found {len(company_scores)} people")
 
-            for m in match_result.data or []:
-                pid = m['subject_person_id']
-                sim = m.get('similarity', 0)
-                # Only update if not already found by name (name match = 1.0)
-                if pid not in person_scores or sim > person_scores[pid]:
-                    person_scores[pid] = sim
+                # Merge company results
+                for pid, score in company_scores.items():
+                    company_matched_ids.add(pid)
+                    if pid not in person_scores:
+                        person_scores[pid] = score
 
-            print(f"[FIND_PEOPLE] After semantic: {len(person_scores)} total people")
+                print(f"[FIND_PEOPLE] After company search: {len(person_scores)} total people")
+
+            # 3. Semantic search by assertions (slow, may timeout - wrapped in try/except)
+            try:
+                query_embedding = generate_embedding(query)
+                match_result = supabase.rpc(
+                    'match_assertions_community',
+                    {
+                        'query_embedding': query_embedding,
+                        'match_threshold': 0.4,  # Balanced: less noise, good recall
+                        'match_count': 200
+                    }
+                ).execute()
+
+                for m in match_result.data or []:
+                    pid = m['subject_person_id']
+                    sim = m.get('similarity', 0)
+                    # Only update if not already found by name (name match = 1.0)
+                    if pid not in person_scores or sim > person_scores[pid]:
+                        person_scores[pid] = sim
+                    # Boost score if also found by company search
+                    if pid in company_matched_ids and person_scores[pid] < 1.0:
+                        person_scores[pid] = min(1.0, person_scores[pid] + 0.2)
+
+                print(f"[FIND_PEOPLE] After semantic: {len(person_scores)} total people")
+            except Exception as e:
+                print(f"[FIND_PEOPLE] Semantic search failed (continuing with name+company results): {e}")
 
             if not person_scores:
                 return json.dumps({'people': [], 'total': 0, 'message': 'No people match the query'}, ensure_ascii=False)

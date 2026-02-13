@@ -52,7 +52,7 @@ async def search_network(
         'match_assertions',
         {
             'query_embedding': query_embedding,
-            'match_threshold': 0.3,
+            'match_threshold': 0.4,  # Balanced: less noise, good recall
             'match_count': 20,
             'p_owner_id': user_id
         }
