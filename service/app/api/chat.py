@@ -2061,26 +2061,26 @@ class ChatDirectResult:
 
 async def chat_direct(message: str, user_id: str, session_id: Optional[str] = None) -> ChatDirectResult:
     """
-    Direct chat function for Telegram bot (no HTTP overhead).
+    TIER 1: Fast, simple search.
 
-    Returns: ChatDirectResult with message, session_id, and found people
+    Just calls find_people once, returns results.
+    No agentic loop, no multiple tools — that's what Tier 2 (Claude Agent) is for.
     """
     settings = get_settings()
     supabase = get_supabase_admin()
     client = openai.OpenAI(api_key=settings.openai_api_key)
 
-    # Get or create session
+    print(f"[TIER1] Starting fast search for: {message[:50]}...")
+
+    # Get or create session (for history/context)
     if session_id:
-        # Verify session belongs to user
         session_check = supabase.table('chat_session').select('session_id').eq(
             'session_id', session_id
         ).eq('owner_id', user_id).execute()
-
         if not session_check.data:
-            session_id = None  # Create new session
+            session_id = None
 
     if not session_id:
-        # Create new session
         session = supabase.table('chat_session').insert({
             'owner_id': user_id,
             'title': message[:50] + ('...' if len(message) > 50 else '')
@@ -2094,181 +2094,61 @@ async def chat_direct(message: str, user_id: str, session_id: Optional[str] = No
         'content': message
     }).execute()
 
-    # Load conversation history
-    history = supabase.table('chat_message').select(
-        'role, content, tool_calls, tool_call_id'
-    ).eq('session_id', session_id).order('created_at').execute()
+    # === TIER 1: Single call to find_people ===
+    search_result = await execute_tool("find_people", {"query": message, "limit": 20}, user_id)
 
-    # Build messages for OpenAI
-    messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+    # Parse results
+    found_people = []
+    try:
+        result_data = json.loads(search_result)
+        people_list = result_data.get('people', [])
+        for p in people_list:
+            if isinstance(p, dict):
+                pid = p.get('person_id')
+                name = p.get('name')
+                motivation = p.get('motivation', '')
+                if pid and name:
+                    found_people.append({
+                        'person_id': pid,
+                        'name': name,
+                        'motivation': motivation
+                    })
+        print(f"[TIER1] find_people returned {len(found_people)} people")
+    except json.JSONDecodeError as e:
+        print(f"[TIER1] ERROR parsing find_people result: {e}")
 
-    for msg in history.data:
-        if msg['role'] == 'tool':
-            messages.append({
-                "role": "tool",
-                "content": msg['content'],
-                "tool_call_id": msg['tool_call_id']
-            })
-        elif msg['role'] == 'assistant' and msg.get('tool_calls'):
-            messages.append({
-                "role": "assistant",
-                "content": msg['content'] or "",
-                "tool_calls": msg['tool_calls']
-            })
-        else:
-            messages.append({
-                "role": msg['role'],
-                "content": msg['content']
-            })
+    # Generate simple response text
+    if found_people:
+        # Format response with people and their motivations
+        response_lines = [f"Found {len(found_people)} people:\n"]
+        for p in found_people[:10]:  # Show first 10 in text
+            motivation = p.get('motivation', '')
+            if motivation:
+                response_lines.append(f"👤 **{p['name']}**\n_{motivation}_\n")
+            else:
+                response_lines.append(f"👤 **{p['name']}**\n")
 
-    max_iterations = 5  # Prevent infinite loops
-    found_people = []  # Collect people from report_results
-    iteration_count = 0  # Track if any tool calls happened (for retry logic)
+        if len(found_people) > 10:
+            response_lines.append(f"\n...and {len(found_people) - 10} more.")
 
-    for iteration_count in range(max_iterations):
-        # Call OpenAI
-        response = client.chat.completions.create(
-            model="gpt-4o",
-            messages=messages,
-            tools=TOOLS,
-            tool_choice="auto",
-            temperature=0.7
-        )
+        response_text = "\n".join(response_lines)
+    else:
+        response_text = "I couldn't find anyone matching your query. Try rephrasing or use 'Dig deeper' for a more thorough search."
 
-        assistant_message = response.choices[0].message
+    # Save assistant response
+    supabase.table('chat_message').insert({
+        'session_id': session_id,
+        'role': 'assistant',
+        'content': response_text
+    }).execute()
 
-        # Check if we need to call tools
-        if assistant_message.tool_calls:
-            # Save assistant message with tool calls
-            tool_calls_json = [
-                {
-                    "id": tc.id,
-                    "type": "function",
-                    "function": {
-                        "name": tc.function.name,
-                        "arguments": tc.function.arguments
-                    }
-                }
-                for tc in assistant_message.tool_calls
-            ]
+    print(f"[TIER1] Complete in single call, {len(found_people)} people found")
 
-            supabase.table('chat_message').insert({
-                'session_id': session_id,
-                'role': 'assistant',
-                'content': assistant_message.content or '',
-                'tool_calls': tool_calls_json
-            }).execute()
-
-            messages.append({
-                "role": "assistant",
-                "content": assistant_message.content or "",
-                "tool_calls": tool_calls_json
-            })
-
-            # Execute each tool
-            for tool_call in assistant_message.tool_calls:
-                tool_name = tool_call.function.name
-                tool_args = json.loads(tool_call.function.arguments)
-
-                result = await execute_tool(tool_name, tool_args, user_id)
-
-                # Extract people from report_results tool call (agent reports what it found)
-                if tool_name == "report_results":
-                    try:
-                        # tool_args already parsed from tool_call.function.arguments
-                        people_from_report = tool_args.get("people", [])
-                        for p in people_from_report:
-                            if isinstance(p, dict):
-                                pid = p.get('person_id')
-                                name = p.get('name')
-                                if pid and name:
-                                    # Avoid duplicates
-                                    if not any(fp['person_id'] == pid for fp in found_people):
-                                        found_people.append({
-                                            'person_id': pid,
-                                            'name': name
-                                        })
-                        print(f"[CHAT_DIRECT] report_results: extracted {len(people_from_report)} people, total: {len(found_people)}")
-                    except (TypeError, AttributeError) as e:
-                        print(f"[CHAT_DIRECT] ERROR parsing report_results: {e}")
-
-                # Save tool response
-                supabase.table('chat_message').insert({
-                    'session_id': session_id,
-                    'role': 'tool',
-                    'content': result,
-                    'tool_call_id': tool_call.id
-                }).execute()
-
-                messages.append({
-                    "role": "tool",
-                    "content": result,
-                    "tool_call_id": tool_call.id
-                })
-        else:
-            # No more tool calls, save final response
-            final_content = assistant_message.content or ""
-
-            supabase.table('chat_message').insert({
-                'session_id': session_id,
-                'role': 'assistant',
-                'content': final_content
-            }).execute()
-
-            # Update session timestamp
-            supabase.table('chat_session').update({
-                'updated_at': 'now()'
-            }).eq('session_id', session_id).execute()
-
-            # If agent did searches but forgot to call report_results, retry once
-            if not found_people and iteration_count > 0:
-                print("[CHAT_DIRECT] Agent searched but didn't report_results, retrying...")
-                retry_messages = messages + [{
-                    "role": "user",
-                    "content": "You must call report_results with the people you found."
-                }]
-                retry_response = client.chat.completions.create(
-                    model="gpt-4o",
-                    messages=retry_messages,
-                    tools=TOOLS,
-                    tool_choice="auto",
-                    temperature=0.7
-                )
-                for tool_call in retry_response.choices[0].message.tool_calls or []:
-                    if tool_call.function.name == "report_results":
-                        try:
-                            args = json.loads(tool_call.function.arguments)
-                            people_from_retry = args.get("people", [])
-                            for p in people_from_retry:
-                                if isinstance(p, dict):
-                                    pid = p.get('person_id')
-                                    name = p.get('name')
-                                    if pid and name:
-                                        if not any(fp['person_id'] == pid for fp in found_people):
-                                            found_people.append({
-                                                'person_id': pid,
-                                                'name': name
-                                            })
-                            print(f"[CHAT_DIRECT] Retry got {len(people_from_retry)} people from report_results")
-                        except json.JSONDecodeError:
-                            pass
-
-            # Tier 1 complete: offer "dig deeper" if we found people
-            # Claude agent can explore name variations, company spellings, etc.
-            return ChatDirectResult(
-                final_content,
-                session_id,
-                found_people,
-                can_dig_deeper=len(found_people) > 0,  # Offer dig deeper when results exist
-                original_query=message
-            )
-
-    # If we hit max iterations
     return ChatDirectResult(
-        "I apologize, but I'm having trouble completing this request. Please try again.",
+        response_text,
         session_id,
         found_people,
-        can_dig_deeper=False,
+        can_dig_deeper=True,  # Always offer dig deeper
         original_query=message
     )
 
