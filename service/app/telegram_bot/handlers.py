@@ -391,8 +391,19 @@ async def handle_chat_message_direct(chat_id: int, text: str, user_id: str, user
                 parse_mode="HTML",
                 max_buttons=5
             )
+        elif result.can_dig_deeper:
+            # No people found, but offer dig deeper
+            logger.info("Tier 1 found 0 people, showing Dig deeper button")
+            await send_message_with_dig_deeper(
+                chat_id,
+                result.message,
+                [],  # No people buttons
+                original_query=text,
+                parse_mode="HTML",
+                max_buttons=0
+            )
         else:
-            # No people found, send regular message
+            # No people found, no dig deeper option
             await send_message(chat_id, result.message, parse_mode="HTML")
 
         logger.info(f"Tier 1 response sent for session_id={result.session_id}")
