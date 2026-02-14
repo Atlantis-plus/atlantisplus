@@ -280,8 +280,12 @@ async def send_message_with_dig_deeper(
     if parse_mode:
         payload["parse_mode"] = parse_mode
 
+    print(f"[SEND_DIG_DEEPER] Sending message with {len(buttons)} button rows, text length: {len(text)}")
+
     async with httpx.AsyncClient() as client:
         response = await client.post(url, json=payload)
+        if response.status_code != 200:
+            print(f"[SEND_DIG_DEEPER] Telegram error {response.status_code}: {response.text}")
         response.raise_for_status()
         return response.json()
 
