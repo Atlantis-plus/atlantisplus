@@ -625,7 +625,7 @@ async def handle_dig_deeper_callback(
     print(f"[DIG_DEEPER_CALLBACK] Started with callback_data={callback_data}, chat_id={chat_id}")
 
     # Answer immediately with loading message
-    await query.answer("🔍 Searching deeper... This may take 10-15 seconds")
+    await query.answer("🔍 Searching deeper... This may take up to 1 minute")
     print("[DIG_DEEPER_CALLBACK] Answered callback query")
 
     # Parse query hash from callback_data
@@ -653,7 +653,7 @@ async def handle_dig_deeper_callback(
         "• Company name variations (Яндекс vs Yandex)\n"
         "• Different predicates (works_at, met_on, knows)\n"
         "• Non-obvious connections\n\n"
-        "<i>This usually takes 10-15 seconds...</i>",
+        "<i>This usually takes up to 1 minute...</i>",
         parse_mode="HTML"
     )
 

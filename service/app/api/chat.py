@@ -1942,7 +1942,7 @@ async def chat_direct(message: str, user_id: str, session_id: Optional[str] = No
 
         response_text = "\n".join(response_lines)
     else:
-        response_text = "I couldn't find anyone matching your query. Try rephrasing or use 'Dig deeper' for a more thorough search."
+        response_text = "I couldn't find anyone matching your query. Try rephrasing or being more specific."
 
     # Save assistant response
     supabase.table('chat_message').insert({
@@ -1957,7 +1957,7 @@ async def chat_direct(message: str, user_id: str, session_id: Optional[str] = No
         response_text,
         session_id,
         found_people,
-        can_dig_deeper=True,  # Always offer dig deeper
+        can_dig_deeper=bool(found_people),  # Only offer dig deeper if Tier 1 found people
         original_query=message
     )
 
