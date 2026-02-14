@@ -551,12 +551,15 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
     - dig:{query_hash} — Dig deeper with Claude agent (Tier 2 search)
     - merge, reject — Duplicate resolution (proactive_service)
     """
+    print("[CALLBACK_HANDLER] Entered handle_callback_query")
+
     query = update.callback_query
     user = update.effective_user
     callback_data = query.data
     message_id = query.message.message_id
     chat_id = query.message.chat_id
 
+    print(f"[CALLBACK_HANDLER] callback_data={callback_data}, user_id={user.id}")
     logger.info(f"Callback from user_id={user.id}: {callback_data}")
 
     # Authenticate user
@@ -619,8 +622,11 @@ async def handle_dig_deeper_callback(
 
     The button is disabled after click to prevent double-taps.
     """
+    print(f"[DIG_DEEPER_CALLBACK] Started with callback_data={callback_data}, chat_id={chat_id}")
+
     # Answer immediately with loading message
     await query.answer("🔍 Searching deeper... This may take 10-15 seconds")
+    print("[DIG_DEEPER_CALLBACK] Answered callback query")
 
     # Parse query hash from callback_data
     query_hash = callback_data.split(":", 1)[1] if ":" in callback_data else ""

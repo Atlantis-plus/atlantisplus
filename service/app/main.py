@@ -123,6 +123,17 @@ async def telegram_webhook(
     # Parse update data
     update_data = await request.json()
 
+    # Debug: log update type
+    update_type = "unknown"
+    if "message" in update_data:
+        update_type = "message"
+    elif "callback_query" in update_data:
+        update_type = "callback_query"
+        print(f"[WEBHOOK] Callback query received: {update_data.get('callback_query', {}).get('data', 'no data')}")
+    elif "edited_message" in update_data:
+        update_type = "edited_message"
+    print(f"[WEBHOOK] Update type: {update_type}")
+
     # Handle update in background (fire-and-forget for fast 200 OK)
     asyncio.create_task(handle_telegram_update(update_data))
 
