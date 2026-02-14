@@ -15,6 +15,7 @@ from app.middleware.auth import verify_supabase_token, get_user_id
 from app.services.embedding import generate_embedding
 from app.services.gap_detection import get_gap_detection_service
 from app.services.dedup import get_dedup_service
+from app.services.claude_agent import ClaudeAgent
 from app.agents.prompts import SEARCH_FILTER_PROMPT
 
 router = APIRouter(tags=["chat"])
@@ -408,6 +409,160 @@ REQUIRES confirm=true to actually delete.""",
             }
         }
     },
+    # =============================================================================
+    # LOW-LEVEL EXPLORATION TOOLS (for agent visibility into data)
+    # =============================================================================
+    {
+        "type": "function",
+        "function": {
+            "name": "explore_company_names",
+            "description": """Show all company name variations in the database with people counts.
+
+Use this BEFORE searching for people at a company to see:
+- How the company is spelled in different assertions
+- Which spelling has more people
+- Cyrillic vs Latin variants
+
+Example: explore_company_names(pattern="%yandex%") reveals:
+- "Yandex" (26 people)
+- "Яндекс" (2 people)
+- "Yandex N.V." (1 person)
+
+Then you know to search for ALL variants, not just one.""",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "pattern": {
+                        "type": "string",
+                        "description": "SQL ILIKE pattern (e.g., '%yandex%', '%google%'). Case-insensitive."
+                    }
+                },
+                "required": ["pattern"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "count_people_by_filter",
+            "description": """Quick count of people matching filters. No details, just total count.
+
+Use to verify before searching:
+- count_people_by_filter(company_pattern="%Meta%") → 15
+- count_people_by_filter(name_pattern="%John%") → 3
+
+Much faster than find_people when you just need counts.""",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "company_pattern": {
+                        "type": "string",
+                        "description": "ILIKE pattern for company (works_at predicate)"
+                    },
+                    "name_pattern": {
+                        "type": "string",
+                        "description": "ILIKE pattern for person name"
+                    }
+                }
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "search_by_company_exact",
+            "description": """Find people by EXACT company ILIKE pattern. Low-level, no semantic search.
+
+Unlike find_people (which uses embeddings), this is literal string matching:
+- search_by_company_exact(pattern="Яндекс") → only Cyrillic spelling
+- search_by_company_exact(pattern="%yandex%") → only Latin spelling
+
+Use after explore_company_names to search specific variants.""",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "pattern": {
+                        "type": "string",
+                        "description": "SQL ILIKE pattern for company name (e.g., 'Google', '%Meta%')"
+                    },
+                    "predicate": {
+                        "type": "string",
+                        "description": "Which predicate to search (default: works_at)",
+                        "enum": ["works_at", "met_on", "worked_on", "background"],
+                        "default": "works_at"
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Max results (default 50)",
+                        "default": 50
+                    }
+                },
+                "required": ["pattern"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "search_by_name_fuzzy",
+            "description": """Fuzzy name search using trigram similarity. Finds typos and variations.
+
+Examples:
+- "Михаил" finds "Michael", "Misha", "Миша" (similar sounds)
+- "John" finds "Jon", "Johny", "Johnny"
+
+Returns similarity score (0.0-1.0). Default threshold 0.4.""",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "name": {
+                        "type": "string",
+                        "description": "Name to search (any spelling)"
+                    },
+                    "threshold": {
+                        "type": "number",
+                        "description": "Min similarity (0.0-1.0, default 0.4). Lower = more results.",
+                        "default": 0.4
+                    }
+                },
+                "required": ["name"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "semantic_search_raw",
+            "description": """Direct semantic search on assertions. Returns raw embedding matches.
+
+Unlike find_people (which groups by person and adds motivations), this returns:
+- Individual assertions that match
+- Raw similarity scores
+- No LLM post-processing
+
+Use for debugging or when you need to see exactly what the vector search found.""",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "Semantic query (converted to embedding)"
+                    },
+                    "threshold": {
+                        "type": "number",
+                        "description": "Min similarity (0.0-1.0, default 0.4)",
+                        "default": 0.4
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Max results (default 20)",
+                        "default": 20
+                    }
+                },
+                "required": ["query"]
+            }
+        }
+    },
 ]
 
 SYSTEM_PROMPT = """You are a personal network assistant helping the user manage and query their professional network.
@@ -681,16 +836,20 @@ async def execute_tool(tool_name: str, args: dict, user_id: str) -> str:
         limit = args.get('limit', 20)
         query = args.get('query')
         name_pattern = args.get('name_pattern')
-        print(f"[FIND_PEOPLE] query={query}, name_pattern={name_pattern}, limit={limit}")
+        shared_mode = settings.shared_database_mode
+        print(f"[FIND_PEOPLE] query={query}, name_pattern={name_pattern}, limit={limit}, shared_mode={shared_mode}")
 
         # Hybrid search: name + semantic
         if query:
             person_scores = {}  # person_id -> best_score (1.0 for name match, similarity for semantic)
 
             # 1. Name search (exact/partial match gets high score)
-            name_result = supabase.table('person').select(
-                'person_id, display_name, import_source'
-            ).eq('owner_id', user_id).eq('status', 'active').ilike('display_name', f'%{query}%').limit(50).execute()
+            name_query = supabase.table('person').select(
+                'person_id, display_name, import_source, owner_id'
+            ).eq('status', 'active').ilike('display_name', f'%{query}%').limit(50)
+            if not shared_mode:
+                name_query = name_query.eq('owner_id', user_id)
+            name_result = name_query.execute()
 
             for p in name_result.data or []:
                 # Name matches get score 1.0 (highest priority)
@@ -752,9 +911,12 @@ async def execute_tool(tool_name: str, args: dict, user_id: str) -> str:
             print(f"[FIND_PEOPLE] Top scores: {[(pid[:8], round(s, 3)) for pid, s in sorted_people[:5]]}")
 
             # Fetch person details for those not already fetched
-            people_result = supabase.table('person').select(
+            people_query = supabase.table('person').select(
                 'person_id, display_name, import_source, owner_id'
-            ).in_('person_id', top_person_ids).eq('owner_id', user_id).eq('status', 'active').execute()
+            ).in_('person_id', top_person_ids).eq('status', 'active')
+            if not shared_mode:
+                people_query = people_query.eq('owner_id', user_id)
+            people_result = people_query.execute()
 
             # Get email status
             email_check = supabase.table('identity').select('person_id').in_(
@@ -779,12 +941,14 @@ async def execute_tool(tool_name: str, args: dict, user_id: str) -> str:
                 if pid not in people_by_id:
                     continue
                 p = people_by_id[pid]
+                is_own = p.get('owner_id') == user_id
                 results.append({
                     'person_id': p['person_id'],
                     'name': p['display_name'],
                     'import_source': p.get('import_source') or 'manual',
                     'has_email': p['person_id'] in has_email_ids,
-                    'relevance': round(person_scores[pid], 2)
+                    'relevance': round(person_scores[pid], 2),
+                    'is_own': is_own
                 })
 
             print(f"[FIND_PEOPLE] Hybrid search found {len(results)} people")
@@ -797,9 +961,12 @@ async def execute_tool(tool_name: str, args: dict, user_id: str) -> str:
                     query, results, user_id, supabase, settings
                 )
 
+            # Fix: total should reflect only accessible people (after owner filter)
+            # person_scores may include people from other owners (via semantic search)
+            accessible_count = len(people_by_id)  # Only people that passed owner filter
             return json.dumps({
                 'people': results,
-                'total': len(person_scores),
+                'total': accessible_count,
                 'showing': len(results),
                 'is_semantic': len(results) > 1  # Has motivations if multiple results
             }, ensure_ascii=False, indent=2)
@@ -836,16 +1003,20 @@ async def execute_tool(tool_name: str, args: dict, user_id: str) -> str:
             }, ensure_ascii=False, indent=2)
 
         # No search criteria - list all (limited)
-        result = supabase.table('person').select(
-            'person_id, display_name, import_source'
-        ).eq('owner_id', user_id).eq('status', 'active').limit(limit).execute()
+        list_query = supabase.table('person').select(
+            'person_id, display_name, import_source, owner_id'
+        ).eq('status', 'active').limit(limit)
+        if not shared_mode:
+            list_query = list_query.eq('owner_id', user_id)
+        result = list_query.execute()
 
         results = []
         for p in result.data or []:
             results.append({
                 'person_id': p['person_id'],
                 'name': p['display_name'],
-                'import_source': p.get('import_source') or 'manual'
+                'import_source': p.get('import_source') or 'manual',
+                'is_own': p.get('owner_id') == user_id
             })
 
         return json.dumps({
@@ -1367,6 +1538,238 @@ async def execute_tool(tool_name: str, args: dict, user_id: str) -> str:
             'message': f"Rolled back {batch_check.data['import_type']} import. Deleted {deleted_count} people."
         }, ensure_ascii=False)
 
+    # =============================================================================
+    # LOW-LEVEL EXPLORATION TOOLS
+    # =============================================================================
+
+    elif tool_name == "explore_company_names":
+        pattern = args['pattern']
+        shared_mode = settings.shared_database_mode
+
+        # Get assertions matching the pattern
+        result = supabase.table('assertion').select(
+            'object_value, subject_person_id'
+        ).in_('predicate', ['works_at', 'met_on']).ilike(
+            'object_value', pattern
+        ).limit(500).execute()
+
+        # In non-shared mode, filter to only user's people
+        allowed_person_ids = None
+        if not shared_mode:
+            people_result = supabase.table('person').select('person_id').eq(
+                'owner_id', user_id
+            ).eq('status', 'active').execute()
+            allowed_person_ids = set(p['person_id'] for p in people_result.data or [])
+
+        # Aggregate in Python (simpler than raw SQL via Supabase)
+        company_counts: dict[str, set] = {}
+        for row in result.data or []:
+            # Filter by owner if not shared mode
+            if allowed_person_ids is not None and row['subject_person_id'] not in allowed_person_ids:
+                continue
+
+            company = row['object_value']
+            if company not in company_counts:
+                company_counts[company] = set()
+            company_counts[company].add(row['subject_person_id'])
+
+        # Sort by count descending
+        sorted_companies = sorted(
+            [(c, len(pids)) for c, pids in company_counts.items()],
+            key=lambda x: x[1],
+            reverse=True
+        )[:30]  # Top 30
+
+        return json.dumps({
+            'pattern': pattern,
+            'variants': [
+                {'company': html.escape(c), 'people_count': cnt}
+                for c, cnt in sorted_companies
+            ],
+            'total_variants': len(company_counts),
+            'hint': 'Use search_by_company_exact with specific variant to get people'
+        }, ensure_ascii=False, indent=2)
+
+    elif tool_name == "count_people_by_filter":
+        company_pattern = args.get('company_pattern')
+        name_pattern = args.get('name_pattern')
+        shared_mode = settings.shared_database_mode
+
+        # Start with person query
+        query = supabase.table('person').select('person_id', count='exact').eq('status', 'active')
+
+        if not shared_mode:
+            query = query.eq('owner_id', user_id)
+
+        if name_pattern:
+            query = query.ilike('display_name', name_pattern)
+
+        if company_pattern:
+            # Get person IDs from assertions first
+            assertion_result = supabase.table('assertion').select(
+                'subject_person_id'
+            ).eq('predicate', 'works_at').ilike('object_value', company_pattern).execute()
+
+            if not assertion_result.data:
+                return json.dumps({'count': 0, 'filters': args}, ensure_ascii=False)
+
+            person_ids = list(set(r['subject_person_id'] for r in assertion_result.data))
+            query = query.in_('person_id', person_ids)
+
+        result = query.execute()
+
+        return json.dumps({
+            'count': result.count if hasattr(result, 'count') and result.count is not None else len(result.data or []),
+            'filters': {k: v for k, v in args.items() if v}
+        }, ensure_ascii=False)
+
+    elif tool_name == "search_by_company_exact":
+        pattern = args['pattern']
+        predicate = args.get('predicate', 'works_at')
+        limit = args.get('limit', 50)
+        shared_mode = settings.shared_database_mode
+
+        # Get assertions matching the pattern
+        result = supabase.table('assertion').select(
+            'subject_person_id, predicate, object_value, confidence'
+        ).eq('predicate', predicate).ilike('object_value', pattern).limit(limit * 2).execute()
+
+        if not result.data:
+            return json.dumps({
+                'people': [],
+                'total': 0,
+                'pattern': pattern,
+                'predicate': predicate
+            }, ensure_ascii=False)
+
+        # Get person details
+        person_ids = list(set(r['subject_person_id'] for r in result.data))
+
+        people_query = supabase.table('person').select(
+            'person_id, display_name, owner_id'
+        ).in_('person_id', person_ids).eq('status', 'active')
+
+        if not shared_mode:
+            people_query = people_query.eq('owner_id', user_id)
+
+        people_result = people_query.limit(limit).execute()
+        people_by_id = {p['person_id']: p for p in people_result.data or []}
+
+        # Build results (with HTML escaping for safe display)
+        people = []
+        for row in result.data:
+            pid = row['subject_person_id']
+            if pid in people_by_id:
+                p = people_by_id[pid]
+                people.append({
+                    'person_id': pid,
+                    'name': html.escape(p['display_name']),
+                    'company': html.escape(row['object_value']),
+                    'predicate': row['predicate'],
+                    'is_own': p.get('owner_id') == user_id
+                })
+
+        # Dedupe by person_id
+        seen = set()
+        unique_people = []
+        for p in people:
+            if p['person_id'] not in seen:
+                seen.add(p['person_id'])
+                unique_people.append(p)
+
+        return json.dumps({
+            'people': unique_people[:limit],
+            'total': len(unique_people),
+            'pattern': pattern,
+            'predicate': predicate
+        }, ensure_ascii=False, indent=2)
+
+    elif tool_name == "search_by_name_fuzzy":
+        name = args['name']
+        threshold = args.get('threshold', 0.4)
+        shared_mode = settings.shared_database_mode
+
+        if shared_mode:
+            # Use community version
+            result = supabase.rpc('find_similar_names_community', {
+                'p_name': name,
+                'p_threshold': threshold
+            }).execute()
+        else:
+            result = supabase.rpc('find_similar_names', {
+                'p_owner_id': user_id,
+                'p_name': name,
+                'p_threshold': threshold
+            }).execute()
+
+        people = [
+            {
+                'person_id': r['person_id'],
+                'name': html.escape(r['display_name']),
+                'similarity': round(r['similarity'], 3)
+            }
+            for r in result.data or []
+        ]
+
+        return json.dumps({
+            'people': people,
+            'total': len(people),
+            'search_name': name,
+            'threshold': threshold
+        }, ensure_ascii=False, indent=2)
+
+    elif tool_name == "semantic_search_raw":
+        query = args['query']
+        threshold = args.get('threshold', 0.4)
+        limit = args.get('limit', 20)
+        shared_mode = settings.shared_database_mode
+
+        # Generate embedding
+        query_embedding = generate_embedding(query)
+
+        # Call match_assertions RPC
+        if shared_mode:
+            result = supabase.rpc('match_assertions_community', {
+                'query_embedding': query_embedding,
+                'match_threshold': threshold,
+                'match_count': limit
+            }).execute()
+        else:
+            result = supabase.rpc('match_assertions', {
+                'query_embedding': query_embedding,
+                'match_threshold': threshold,
+                'match_count': limit,
+                'p_owner_id': user_id
+            }).execute()
+
+        # Get person names
+        person_ids = list(set(r['subject_person_id'] for r in result.data or []))
+        if person_ids:
+            people_result = supabase.table('person').select(
+                'person_id, display_name'
+            ).in_('person_id', person_ids).execute()
+            name_by_id = {p['person_id']: p['display_name'] for p in people_result.data or []}
+        else:
+            name_by_id = {}
+
+        assertions = [
+            {
+                'person_id': r['subject_person_id'],
+                'person_name': html.escape(name_by_id.get(r['subject_person_id'], 'Unknown')),
+                'predicate': r['predicate'],
+                'value': html.escape(r['object_value'] or ''),
+                'similarity': round(r['similarity'], 3)
+            }
+            for r in result.data or []
+        ]
+
+        return json.dumps({
+            'assertions': assertions,
+            'total': len(assertions),
+            'query': query,
+            'threshold': threshold
+        }, ensure_ascii=False, indent=2)
+
     return f"Unknown tool: {tool_name}"
 
 
@@ -1764,4 +2167,110 @@ async def chat_direct(message: str, user_id: str, session_id: Optional[str] = No
         "I apologize, but I'm having trouble completing this request. Please try again.",
         session_id,
         found_people
+    )
+
+
+# =============================================================================
+# CLAUDE AGENT ENDPOINT (experimental)
+# =============================================================================
+
+CLAUDE_SYSTEM_PROMPT = """You are a personal network assistant helping the user find people in their professional network.
+
+## YOUR TOOLS
+
+You have multiple tools at different levels:
+- **find_people** — semantic search (good for concepts like "AI experts")
+- **explore_company_names** — see how company names are actually stored
+- **search_by_company_exact** — literal pattern match
+- **search_by_name_fuzzy** — fuzzy name matching
+- **semantic_search_raw** — raw embedding results
+- **count_people_by_filter** — quick counts
+- **get_person_details** — full profile
+
+Use whichever tools you need. Explore the data. Don't settle for incomplete results.
+
+## KEY INSIGHT
+
+Data in the database has variations. "Yandex" and "Яндекс" are stored separately.
+If results seem incomplete, investigate why. You have the tools to see what's there.
+
+## OUTPUT
+
+Use HTML for Telegram: <b>bold</b>, <i>italic</i>
+Format: 👤 <b>Name</b> + reason why relevant
+Respond in the user's language.
+"""
+
+
+@router.post("/chat/claude")
+async def chat_claude(
+    request: ChatRequest,
+    token_payload: dict = Depends(verify_supabase_token)
+):
+    """
+    Chat with Claude agent (experimental).
+
+    Uses Anthropic Claude with agentic loop for better reasoning.
+    """
+    settings = get_settings()
+    user_id = get_user_id(token_payload)
+
+    if not settings.anthropic_api_key:
+        raise HTTPException(
+            status_code=503,
+            detail="Claude agent not configured (missing ANTHROPIC_API_KEY)"
+        )
+
+    # Create Claude agent with same tools as OpenAI endpoint
+    agent = ClaudeAgent(
+        user_id=user_id,
+        tools=TOOLS,
+        execute_tool_fn=execute_tool,
+        system_prompt=CLAUDE_SYSTEM_PROMPT,
+        model="claude-sonnet-4-20250514"
+    )
+
+    # Run the agentic loop
+    result = await agent.run(request.message)
+
+    return {
+        "message": result.message,
+        "tool_calls": result.tool_calls,
+        "iterations": result.iterations,
+        "found_people": result.found_people
+    }
+
+
+async def chat_direct_claude(
+    message: str,
+    user_id: str
+) -> ChatDirectResult:
+    """
+    Direct Claude chat for Telegram bot.
+
+    Returns: ChatDirectResult with message, session_id (empty), and found people
+    """
+    settings = get_settings()
+
+    if not settings.anthropic_api_key:
+        return ChatDirectResult(
+            "Claude agent not configured.",
+            "",
+            []
+        )
+
+    agent = ClaudeAgent(
+        user_id=user_id,
+        tools=TOOLS,
+        execute_tool_fn=execute_tool,
+        system_prompt=CLAUDE_SYSTEM_PROMPT,
+        model="claude-sonnet-4-20250514"
+    )
+
+    result = await agent.run(message)
+
+    return ChatDirectResult(
+        result.message,
+        "",  # No session tracking for now
+        result.found_people
     )

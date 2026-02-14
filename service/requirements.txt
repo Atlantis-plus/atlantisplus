@@ -9,6 +9,9 @@ supabase>=2.10.0
 # OpenAI
 openai==1.12.0
 
+# Anthropic (Claude)
+anthropic>=0.39.0
+
 # JWT validation
 python-jose[cryptography]==3.3.0
 

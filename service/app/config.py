@@ -12,6 +12,9 @@ class Settings(BaseSettings):
     # OpenAI
     openai_api_key: str
 
+    # Anthropic (Claude)
+    anthropic_api_key: str = ""  # Optional: for Claude agent
+
     # Telegram
     telegram_bot_token: str
     telegram_webhook_secret: str = ""  # Optional: for webhook verification
@@ -33,6 +36,10 @@ class Settings(BaseSettings):
     # Test mode (for automated testing)
     test_mode_enabled: bool = False
     test_auth_secret: str = ""
+
+    # Shared database mode (search across ALL users' data)
+    # WARNING: For development/testing only! Bypasses owner isolation.
+    shared_database_mode: bool = False
 
     class Config:
         env_file = ".env"
