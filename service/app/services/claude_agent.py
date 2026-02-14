@@ -280,9 +280,39 @@ class ClaudeAgent:
                 print(f"[CLAUDE_AGENT] Unexpected stop_reason: {response.stop_reason}")
                 break
 
-        # Max iterations reached
+        # Max iterations reached - try to get report_results one more time
+        print(f"[CLAUDE_AGENT] Max iterations reached ({iteration}), requesting report_results...")
+
+        if not found_people:
+            try:
+                retry_response = self.client.messages.create(
+                    model=self.model,
+                    max_tokens=1024,
+                    system=self.system_prompt,
+                    messages=messages + [{"role": "user", "content": "You've done enough searching. Now call report_results with ALL people you found so far. This is required."}],
+                    tools=self.tools
+                )
+                for block in retry_response.content:
+                    if block.type == "tool_use" and block.name == "report_results":
+                        try:
+                            found_people = block.input.get("people", [])
+                            print(f"[CLAUDE_AGENT] Extracted {len(found_people)} people from max-iterations retry")
+                        except (AttributeError, TypeError):
+                            pass
+            except Exception as e:
+                print(f"[CLAUDE_AGENT] Retry failed: {e}")
+
+        # Build final message from last response or default
+        final_text = ""
+        for block in response.content:
+            if hasattr(block, "text"):
+                final_text += block.text
+
+        if not final_text:
+            final_text = f"Found {len(found_people)} people related to your query." if found_people else "I had trouble completing the search. Please try again."
+
         return AgentResult(
-            message="I apologize, but I'm having trouble completing this request. Please try again.",
+            message=final_text,
             tool_calls=tool_calls_history,
             iterations=iteration,
             found_people=found_people
