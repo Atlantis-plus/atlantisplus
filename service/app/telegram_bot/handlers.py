@@ -5,6 +5,23 @@ ARCHITECTURE: Direct function calls - NO HTTP overhead!
 - Handlers call business logic functions directly
 - Use Supabase with service_role_key
 - API endpoints remain for Mini App
+
+PROGRESSIVE SEARCH ENHANCEMENT:
+===============================
+Search uses two tiers for optimal UX:
+
+Tier 1 (Fast, ~3 sec): OpenAI single-shot semantic search
+- Returns results immediately
+- Shows "Dig deeper" button if results found
+
+Tier 2 (Deep, ~15 sec): Claude agent multi-shot search
+- Triggered by "Dig deeper" button callback
+- Re-runs Tier 1 to get fresh context
+- Uses low-level tools to find name variations, company spellings
+- Finds non-obvious connections
+
+The PENDING_DIG_DEEPER_QUERIES dict stores original queries
+temporarily (keyed by hash) for Tier 2 callbacks.
 """
 
 import asyncio
@@ -14,7 +31,10 @@ from telegram.ext import ContextTypes
 from .auth import get_or_create_user
 from .context import load_context, clear_context, get_active_session, set_active_session
 from .dispatcher import classify_message
-from .telegram_api import send_message, send_chat_action, send_message_with_web_app_buttons
+from .telegram_api import (
+    send_message, send_chat_action, send_message_with_web_app_buttons,
+    send_message_with_dig_deeper, edit_message_text
+)
 from .logging_config import bot_logger as logger
 
 # Direct imports of business logic
@@ -25,7 +45,12 @@ from app.services.proactive import get_proactive_service
 from app.supabase_client import get_supabase_admin
 from app.config import get_settings
 from app.api.process import process_pipeline
-from app.api.chat import chat_direct
+from app.api.chat import chat_direct, chat_dig_deeper
+
+# Store pending "dig deeper" queries (hash → full query)
+# Simple in-memory store, queries expire naturally when bot restarts
+# For production, consider Redis with TTL
+PENDING_DIG_DEEPER_QUERIES: dict[str, str] = {}
 
 
 async def handle_start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -321,10 +346,14 @@ async def handle_note_message_direct(chat_id: int, text: str, user_id: str) -> N
 
 async def handle_chat_message_direct(chat_id: int, text: str, user_id: str, user_context: dict) -> None:
     """
-    Handle query/dialog message.
+    Handle query/dialog message - TIER 1 (fast search).
+
+    PROGRESSIVE SEARCH:
+    - Runs fast OpenAI search (~3 sec)
+    - If results found, shows "Dig deeper" button
+    - User can trigger Claude agent for deeper search
 
     Direct call to chat agent with tool use - NO HTTP!
-    If the response contains found people, adds inline keyboard with Mini App buttons.
     """
     logger.info(f"Processing chat query for user_id={user_id}")
 
@@ -335,15 +364,26 @@ async def handle_chat_message_direct(chat_id: int, text: str, user_id: str, user
         # Get session_id from context (if continuing dialog)
         session_id = user_context.get("chat_session_id")
 
-        # Call chat agent directly - returns ChatDirectResult with message, session_id, and people
+        # TIER 1: Fast search via OpenAI
         result = await chat_direct(text, user_id, session_id)
 
         # Update context with session_id
         await set_active_session(str(chat_id), result.session_id)
 
-        # If people were found in the search, send message with Mini App buttons
-        if result.people:
-            logger.info(f"Found {len(result.people)} people, adding Mini App buttons")
+        # If people found AND dig deeper is available, add the button
+        if result.people and result.can_dig_deeper:
+            logger.info(f"Tier 1 found {len(result.people)} people, adding Dig deeper button")
+            await send_message_with_dig_deeper(
+                chat_id,
+                result.message,
+                result.people,
+                original_query=text,  # Store for Tier 2
+                parse_mode="HTML",
+                max_buttons=5
+            )
+        elif result.people:
+            # People found but no dig deeper (shouldn't happen, but fallback)
+            logger.info(f"Found {len(result.people)} people, no dig deeper")
             await send_message_with_web_app_buttons(
                 chat_id,
                 result.message,
@@ -355,7 +395,7 @@ async def handle_chat_message_direct(chat_id: int, text: str, user_id: str, user
             # No people found, send regular message
             await send_message(chat_id, result.message, parse_mode="HTML")
 
-        logger.info(f"Chat response sent for session_id={result.session_id}")
+        logger.info(f"Tier 1 response sent for session_id={result.session_id}")
 
     except Exception as e:
         logger.error(f"Error in chat handler: {e}", exc_info=True)
@@ -507,7 +547,9 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
     Handle inline keyboard button callbacks.
 
     Callback data format: "action:param1:param2"
-    Actions: merge, reject
+    Actions:
+    - dig:{query_hash} — Dig deeper with Claude agent (Tier 2 search)
+    - merge, reject — Duplicate resolution (proactive_service)
     """
     query = update.callback_query
     user = update.effective_user
@@ -516,9 +558,6 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
     chat_id = query.message.chat_id
 
     logger.info(f"Callback from user_id={user.id}: {callback_data}")
-
-    # Answer the callback to remove loading state
-    await query.answer()
 
     # Authenticate user
     try:
@@ -532,7 +571,17 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         await query.answer("Authentication error", show_alert=True)
         return
 
-    # Handle the callback
+    # Handle "Dig deeper" callback — TIER 2 SEARCH
+    if callback_data.startswith("dig:"):
+        await handle_dig_deeper_callback(
+            query, supabase_user["user_id"], callback_data, chat_id
+        )
+        return
+
+    # Answer the callback to remove loading state (for other callbacks)
+    await query.answer()
+
+    # Handle other callbacks (merge, reject, etc.)
     try:
         proactive_service = get_proactive_service()
         response = await proactive_service.handle_callback(
@@ -546,6 +595,95 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
     except Exception as e:
         logger.error(f"Callback error: {e}", exc_info=True)
         await query.answer(f"Error: {str(e)[:50]}", show_alert=True)
+
+
+async def handle_dig_deeper_callback(
+    query,
+    user_id: str,
+    callback_data: str,
+    chat_id: int
+) -> None:
+    """
+    Handle "Dig deeper" button callback — TIER 2 SEARCH.
+
+    PROGRESSIVE ENHANCEMENT FLOW:
+    =============================
+    1. User searched → Tier 1 found N people → showed "Dig deeper" button
+    2. User clicked button → this callback fires
+    3. We retrieve original query from PENDING_DIG_DEEPER_QUERIES
+    4. Call chat_dig_deeper() which:
+       - Re-runs Tier 1 to get fresh context
+       - Passes context to Claude agent
+       - Agent uses low-level tools to find what Tier 1 missed
+    5. Send deeper results back to user
+
+    The button is disabled after click to prevent double-taps.
+    """
+    # Answer immediately with loading message
+    await query.answer("🔍 Searching deeper... This may take 10-15 seconds")
+
+    # Parse query hash from callback_data
+    query_hash = callback_data.split(":", 1)[1] if ":" in callback_data else ""
+
+    # Retrieve original query
+    original_query = PENDING_DIG_DEEPER_QUERIES.get(query_hash)
+
+    if not original_query:
+        logger.warning(f"Dig deeper: query not found for hash {query_hash}")
+        await send_message(
+            chat_id,
+            "❌ Query expired. Please search again.",
+            parse_mode="HTML"
+        )
+        return
+
+    logger.info(f"[DIG_DEEPER] Starting Tier 2 for: {original_query[:50]}")
+
+    # Send "searching" message
+    await send_message(
+        chat_id,
+        "🔍 <b>Searching deeper...</b>\n\n"
+        "The AI agent is checking:\n"
+        "• Company name variations (Яндекс vs Yandex)\n"
+        "• Different predicates (works_at, met_on, knows)\n"
+        "• Non-obvious connections\n\n"
+        "<i>This usually takes 10-15 seconds...</i>",
+        parse_mode="HTML"
+    )
+
+    # Show typing indicator
+    await send_chat_action(chat_id, "typing")
+
+    try:
+        # TIER 2: Claude agent deep search
+        result = await chat_dig_deeper(original_query, user_id)
+
+        # Send results
+        if result.people:
+            logger.info(f"[DIG_DEEPER] Found {len(result.people)} people")
+            await send_message_with_web_app_buttons(
+                chat_id,
+                result.message,
+                result.people,
+                parse_mode="HTML",
+                max_buttons=5
+            )
+        else:
+            await send_message(chat_id, result.message, parse_mode="HTML")
+
+        # Clean up stored query
+        PENDING_DIG_DEEPER_QUERIES.pop(query_hash, None)
+
+        logger.info(f"[DIG_DEEPER] Tier 2 complete")
+
+    except Exception as e:
+        logger.error(f"[DIG_DEEPER] Error: {e}", exc_info=True)
+        await send_message(
+            chat_id,
+            f"❌ Error in deep search: {str(e)[:200]}\n"
+            "Please try your search again.",
+            parse_mode="HTML"
+        )
 
 
 async def handle_error(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

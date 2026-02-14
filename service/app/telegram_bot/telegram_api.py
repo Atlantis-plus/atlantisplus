@@ -190,6 +190,102 @@ async def send_message_with_web_app_buttons(
         return response.json()
 
 
+async def send_message_with_dig_deeper(
+    chat_id: int,
+    text: str,
+    people: list[dict],
+    original_query: str,
+    parse_mode: Optional[str] = None,
+    max_buttons: int = 5
+) -> dict:
+    """
+    Send search results with person buttons AND "Dig deeper" button.
+
+    PROGRESSIVE ENHANCEMENT UX:
+    ===========================
+    This implements the two-tier search UX:
+
+    Tier 1 (just completed): Fast search returned results
+    - Show person buttons (open Mini App for each person)
+    - Show "Dig deeper" button at the bottom
+
+    When user clicks "Dig deeper":
+    - Callback triggers chat_dig_deeper()
+    - Claude agent runs with initial results as context
+    - Finds non-obvious matches, name variations, etc.
+
+    The original_query is stored in callback_data for Tier 2.
+    Since callback_data is limited to 64 bytes and queries can be long,
+    we use a hash to store/retrieve the full query.
+
+    Args:
+        chat_id: Telegram chat ID
+        text: Search results message
+        people: List of found people [{person_id, name}]
+        original_query: The user's original query (for dig deeper)
+        parse_mode: HTML or Markdown
+        max_buttons: Max person buttons to show
+
+    Returns:
+        Response dict with message_id
+    """
+    settings = get_settings()
+
+    url = f"https://api.telegram.org/bot{settings.telegram_bot_token}/sendMessage"
+
+    # Build web_app buttons for each person
+    buttons = []
+    for person in people[:max_buttons]:
+        person_id = person.get('person_id', '')
+        name = person.get('name', 'Unknown')
+        if len(name) > 30:
+            name = name[:27] + "..."
+
+        web_app_url = f"https://evgenyq.github.io/atlantisplus/?startapp=person_{person_id}"
+        buttons.append([{
+            "text": f"👤 {name}",
+            "web_app": {"url": web_app_url}
+        }])
+
+    # Add "Open Catalog" button
+    if people:
+        buttons.append([{
+            "text": "📋 Open Full Catalog",
+            "web_app": {"url": "https://evgenyq.github.io/atlantisplus/"}
+        }])
+
+    # Add "Dig deeper" button with callback
+    # Store query hash → use context system or simple encoding
+    # For now, use short hash + store full query in pending_queries
+    import hashlib
+    query_hash = hashlib.sha256(original_query.encode()).hexdigest()[:12]
+
+    # Store in module-level pending queries (imported from handlers)
+    from . import handlers
+    handlers.PENDING_DIG_DEEPER_QUERIES[query_hash] = original_query
+
+    buttons.append([{
+        "text": "🔍 Dig deeper with AI agent",
+        "callback_data": f"dig:{query_hash}"
+    }])
+
+    payload = {
+        "chat_id": chat_id,
+        "text": text,
+        "reply_markup": {
+            "inline_keyboard": buttons
+        }
+    }
+
+    if parse_mode:
+        payload["parse_mode"] = parse_mode
+
+    async with httpx.AsyncClient() as client:
+        response = await client.post(url, json=payload)
+        response.raise_for_status()
+        return response.json()
+
+
 async def get_telegram_id_for_user(user_id: str) -> Optional[int]:
     """
     Get Telegram chat ID from Supabase user_id.

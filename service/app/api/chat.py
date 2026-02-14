@@ -1978,11 +1978,47 @@ async def get_session_messages(
 
 
 class ChatDirectResult:
-    """Result from chat_direct with response and extracted people."""
-    def __init__(self, message: str, session_id: str, people: list[dict] = None):
+    """
+    Result from chat_direct with response and extracted people.
+
+    PROGRESSIVE ENHANCEMENT ARCHITECTURE:
+    =====================================
+    The search system uses a two-tier approach for optimal UX:
+
+    Tier 1 (Fast): OpenAI single-shot search (~2-3 sec)
+    - Uses find_people tool with semantic search + filters
+    - Returns results immediately
+    - Sets can_dig_deeper=True if results found
+
+    Tier 2 (Deep): Claude agent multi-shot search (~10-15 sec)
+    - Triggered by "Dig deeper" button
+    - Gets Tier 1 results as context
+    - Uses low-level tools (explore_company_names, etc.)
+    - Finds non-obvious connections and name variations
+
+    WHY THIS ARCHITECTURE:
+    - Users get immediate feedback (Tier 1)
+    - Agent spends tokens only when needed (Tier 2)
+    - Agent is MORE effective with initial context:
+      "Initial search found X at Yandex. Let me check Яндекс variants..."
+    - Natural UX: show results → option to dig deeper
+
+    The original_query is preserved for Tier 2 to re-run Tier 1 search
+    (simpler than caching results, and ensures fresh data).
+    """
+    def __init__(
+        self,
+        message: str,
+        session_id: str,
+        people: list[dict] = None,
+        can_dig_deeper: bool = False,
+        original_query: str = ""
+    ):
         self.message = message
         self.session_id = session_id
         self.people = people or []  # List of {person_id, name} from find_people results
+        self.can_dig_deeper = can_dig_deeper  # True if Claude agent could find more
+        self.original_query = original_query  # Preserved for "dig deeper" callback
 
 
 async def chat_direct(message: str, user_id: str, session_id: Optional[str] = None) -> ChatDirectResult:
@@ -2160,13 +2196,23 @@ async def chat_direct(message: str, user_id: str, session_id: Optional[str] = No
                 'updated_at': 'now()'
             }).eq('session_id', session_id).execute()
 
-            return ChatDirectResult(final_content, session_id, found_people)
+            # Tier 1 complete: offer "dig deeper" if we found people
+            # Claude agent can explore name variations, company spellings, etc.
+            return ChatDirectResult(
+                final_content,
+                session_id,
+                found_people,
+                can_dig_deeper=len(found_people) > 0,  # Offer dig deeper when results exist
+                original_query=message
+            )
 
     # If we hit max iterations
     return ChatDirectResult(
         "I apologize, but I'm having trouble completing this request. Please try again.",
         session_id,
-        found_people
+        found_people,
+        can_dig_deeper=False,
+        original_query=message
     )
 
 
@@ -2246,7 +2292,7 @@ async def chat_direct_claude(
     user_id: str
 ) -> ChatDirectResult:
     """
-    Direct Claude chat for Telegram bot.
+    Direct Claude chat for Telegram bot (Tier 2 - standalone).
 
     Returns: ChatDirectResult with message, session_id (empty), and found people
     """
@@ -2272,5 +2318,143 @@ async def chat_direct_claude(
     return ChatDirectResult(
         result.message,
         "",  # No session tracking for now
-        result.found_people
+        result.found_people,
+        can_dig_deeper=False,  # Already deep search, no further digging
+        original_query=message
+    )
+
+
+async def chat_dig_deeper(
+    original_query: str,
+    user_id: str
+) -> ChatDirectResult:
+    """
+    TIER 2: Deep search with Claude agent.
+
+    PROGRESSIVE ENHANCEMENT - HOW IT WORKS:
+    ========================================
+    This function is called when user clicks "Dig deeper" button after Tier 1 results.
+
+    The flow:
+    1. User sends query: "кто работает в Яндексе?"
+    2. Tier 1 (chat_direct) returns 10 people in ~3 sec, shows "Dig deeper" button
+    3. User clicks button → this function is called
+    4. We re-run Tier 1 search to get fresh results (simpler than caching)
+    5. Claude agent receives: original query + what Tier 1 found
+    6. Agent uses low-level tools to find what Tier 1 MISSED:
+       - explore_company_names → discovers "Яндекс" vs "Yandex" variations
+       - search_by_company_exact → searches each variation
+       - semantic_search_raw → finds related people by context
+
+    WHY RE-RUN TIER 1 INSTEAD OF CACHING:
+    - Simpler implementation (no Redis/memory cache needed)
+    - Ensures fresh data (DB could have changed)
+    - Tier 1 is fast anyway (~2-3 sec)
+    - Callback_data has 64 byte limit, can't store results there
+
+    AGENT INSTRUCTION:
+    The agent is told what was already found, so it can focus on:
+    - Name/company spelling variations
+    - Non-obvious connections (VCs who know target company)
+    - Different predicates (met_on, knows, worked_on)
+
+    Args:
+        original_query: The user's original search query
+        user_id: Supabase user ID
+
+    Returns:
+        ChatDirectResult with agent's deeper findings
+    """
+    settings = get_settings()
+
+    if not settings.anthropic_api_key:
+        return ChatDirectResult(
+            "Claude agent not configured. Please contact support.",
+            "",
+            [],
+            can_dig_deeper=False,
+            original_query=original_query
+        )
+
+    # Step 1: Re-run Tier 1 search to get initial results
+    # This is simpler than caching and ensures fresh data
+    print(f"[DIG_DEEPER] Re-running Tier 1 search for: {original_query[:50]}")
+
+    tier1_result = await chat_direct(original_query, user_id, session_id=None)
+    initial_people = tier1_result.people
+    initial_count = len(initial_people)
+
+    print(f"[DIG_DEEPER] Tier 1 found {initial_count} people")
+
+    # Step 2: Build enhanced prompt for Claude agent
+    # Tell it what was found and ask to find MORE
+    if initial_people:
+        people_summary = "\n".join([
+            f"- {p.get('name', 'Unknown')}"
+            for p in initial_people[:10]  # Show first 10
+        ])
+        if initial_count > 10:
+            people_summary += f"\n... and {initial_count - 10} more"
+
+        enhanced_prompt = f"""User's question: {original_query}
+
+INITIAL SEARCH already found {initial_count} people:
+{people_summary}
+
+YOUR TASK: Find people that the initial search MISSED.
+
+The initial search uses simple semantic matching. You have access to low-level tools
+that can find more:
+
+1. Use explore_company_names to discover spelling variations
+   (e.g., "Yandex" vs "Яндекс" - different people under each)
+
+2. Use search_by_company_exact with EACH variation found
+
+3. Use semantic_search_raw with different phrasings
+
+4. Consider non-obvious connections:
+   - VCs who invested in the target company
+   - People who "met_on" events related to the company
+   - People with "contact_context" mentioning the company
+
+Focus on finding NEW people not in the initial list.
+If you find significantly more, explain what the initial search missed."""
+    else:
+        # No initial results - agent has free reign
+        enhanced_prompt = f"""User's question: {original_query}
+
+Initial search found NO results. This might mean:
+1. Company/person names are spelled differently in the database
+2. The search terms don't match how information is stored
+3. The connection is indirect
+
+Use your low-level tools to investigate:
+1. explore_company_names - see how companies are actually stored
+2. search_by_name_fuzzy - find similar names
+3. semantic_search_raw - try different phrasings
+
+Be thorough - the user is counting on you to find what simple search couldn't."""
+
+    # Step 3: Run Claude agent with enhanced prompt
+    print(f"[DIG_DEEPER] Starting Claude agent with enhanced prompt")
+
+    agent = ClaudeAgent(
+        user_id=user_id,
+        tools=TOOLS,
+        execute_tool_fn=execute_tool,
+        system_prompt=CLAUDE_SYSTEM_PROMPT,
+        model="claude-sonnet-4-20250514"
+    )
+
+    result = await agent.run(enhanced_prompt)
+
+    print(f"[DIG_DEEPER] Agent finished: {result.iterations} iterations, {len(result.found_people)} people")
+
+    return ChatDirectResult(
+        result.message,
+        "",
+        result.found_people,
+        can_dig_deeper=False,  # No further digging after Tier 2
+        original_query=original_query
     )
