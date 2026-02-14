@@ -2133,40 +2133,48 @@ async def chat_direct(message: str, user_id: str, session_id: Optional[str] = No
 
                 result = await execute_tool(tool_name, tool_args, user_id)
 
-                # Extract people from find_people results for Mini App buttons
-                if tool_name == "find_people":
-                    try:
-                        print(f"[CHAT_DIRECT] find_people raw result (first 500 chars): {result[:500]}")
-                        result_data = json.loads(result)
-                        print(f"[CHAT_DIRECT] find_people parsed: type={type(result_data).__name__}, keys={list(result_data.keys()) if isinstance(result_data, dict) else 'N/A'}")
+                # Extract people from ANY tool that returns people (for inline buttons)
+                # This includes: find_people, search_by_company_exact, search_by_name_fuzzy, semantic_search_raw
+                PEOPLE_RETURNING_TOOLS = {
+                    "find_people",
+                    "search_by_company_exact",
+                    "search_by_name_fuzzy",
+                    "semantic_search_raw"
+                }
 
-                        # Handle different possible formats
+                if tool_name in PEOPLE_RETURNING_TOOLS:
+                    try:
+                        print(f"[CHAT_DIRECT] {tool_name} raw result (first 500 chars): {result[:500]}")
+                        result_data = json.loads(result)
+                        print(f"[CHAT_DIRECT] {tool_name} parsed: type={type(result_data).__name__}, keys={list(result_data.keys()) if isinstance(result_data, dict) else 'N/A'}")
+
+                        # Handle different possible formats from various tools
+                        people_list = []
                         if isinstance(result_data, list):
                             # Direct array of people
                             people_list = result_data
                         elif isinstance(result_data, dict):
                             # Dict with 'people' or 'results' key
                             people_list = result_data.get('people') or result_data.get('results') or []
-                        else:
-                            people_list = []
 
-                        print(f"[CHAT_DIRECT] Extracted {len(people_list)} people for buttons")
+                        print(f"[CHAT_DIRECT] Extracted {len(people_list)} people from {tool_name}")
 
                         for p in people_list:
                             if not isinstance(p, dict):
-                                print(f"[CHAT_DIRECT] Skipping non-dict person: {type(p)}")
                                 continue
                             pid = p.get('person_id')
                             name = p.get('name') or p.get('display_name')
                             if pid and name:
-                                found_people.append({
-                                    'person_id': pid,
-                                    'name': name
-                                })
+                                # Avoid duplicates (same person from multiple tools)
+                                if not any(fp['person_id'] == pid for fp in found_people):
+                                    found_people.append({
+                                        'person_id': pid,
+                                        'name': name
+                                    })
 
-                        print(f"[CHAT_DIRECT] Final found_people count: {len(found_people)}")
+                        print(f"[CHAT_DIRECT] Total found_people: {len(found_people)}")
                     except (json.JSONDecodeError, TypeError, AttributeError) as e:
-                        print(f"[CHAT_DIRECT] ERROR parsing find_people result: {e}, result (first 200 chars): {result[:200] if result else 'None'}")
+                        print(f"[CHAT_DIRECT] ERROR parsing {tool_name} result: {e}")
 
                 # Save tool response
                 supabase.table('chat_message').insert({
