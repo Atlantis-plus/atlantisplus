@@ -563,6 +563,35 @@ Use for debugging or when you need to see exactly what the vector search found."
             }
         }
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "report_results",
+            "description": "MUST be called at the end of every search to report found people to the user. Extract person_id and name from whatever tools you used.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "people": {
+                        "type": "array",
+                        "description": "All people found, deduplicated by person_id",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "person_id": {"type": "string"},
+                                "name": {"type": "string"}
+                            },
+                            "required": ["person_id", "name"]
+                        }
+                    },
+                    "summary": {
+                        "type": "string",
+                        "description": "Brief summary of search results for the user"
+                    }
+                },
+                "required": ["people", "summary"]
+            }
+        }
+    },
 ]
 
 SYSTEM_PROMPT = """You are a personal network assistant helping the user manage and query their professional network.
@@ -676,6 +705,12 @@ You help the user answer questions like:
 - "What do I know about [person]?"
 - "Who works at [company]?"
 - "Find me someone who knows about [topic]"
+
+CRITICAL RULE: After completing any search, you MUST call report_results with ALL people you found.
+- Extract person_id and name from the results of whatever tools you used
+- Deduplicate by person_id (same person may appear in multiple tool results)
+- The summary field should be a brief description for the user
+- If you found no people, call report_results with empty people array
 """
 
 
@@ -1770,6 +1805,9 @@ async def execute_tool(tool_name: str, args: dict, user_id: str) -> str:
             'threshold': threshold
         }, ensure_ascii=False, indent=2)
 
+    elif tool_name == "report_results":
+        return json.dumps({"status": "reported", "count": len(args.get("people", []))})
+
     return f"Unknown tool: {tool_name}"
 
 
@@ -2084,9 +2122,10 @@ async def chat_direct(message: str, user_id: str, session_id: Optional[str] = No
             })
 
     max_iterations = 5  # Prevent infinite loops
-    found_people = []  # Collect people from find_people results
+    found_people = []  # Collect people from report_results
+    iteration_count = 0  # Track if any tool calls happened (for retry logic)
 
-    for _ in range(max_iterations):
+    for iteration_count in range(max_iterations):
         # Call OpenAI
         response = client.chat.completions.create(
             model="gpt-4o",
@@ -2133,48 +2172,25 @@ async def chat_direct(message: str, user_id: str, session_id: Optional[str] = No
 
                 result = await execute_tool(tool_name, tool_args, user_id)
 
-                # Extract people from ANY tool that returns people (for inline buttons)
-                # This includes: find_people, search_by_company_exact, search_by_name_fuzzy, semantic_search_raw
-                PEOPLE_RETURNING_TOOLS = {
-                    "find_people",
-                    "search_by_company_exact",
-                    "search_by_name_fuzzy",
-                    "semantic_search_raw"
-                }
-
-                if tool_name in PEOPLE_RETURNING_TOOLS:
+                # Extract people from report_results tool call (agent reports what it found)
+                if tool_name == "report_results":
                     try:
-                        print(f"[CHAT_DIRECT] {tool_name} raw result (first 500 chars): {result[:500]}")
-                        result_data = json.loads(result)
-                        print(f"[CHAT_DIRECT] {tool_name} parsed: type={type(result_data).__name__}, keys={list(result_data.keys()) if isinstance(result_data, dict) else 'N/A'}")
-
-                        # Handle different possible formats from various tools
-                        people_list = []
-                        if isinstance(result_data, list):
-                            # Direct array of people
-                            people_list = result_data
-                        elif isinstance(result_data, dict):
-                            # Dict with 'people' or 'results' key
-                            people_list = result_data.get('people') or result_data.get('results') or []
-
-                        print(f"[CHAT_DIRECT] Extracted {len(people_list)} people from {tool_name}")
-
-                        for p in people_list:
-                            if not isinstance(p, dict):
-                                continue
-                            pid = p.get('person_id')
-                            name = p.get('name') or p.get('display_name')
-                            if pid and name:
-                                # Avoid duplicates (same person from multiple tools)
-                                if not any(fp['person_id'] == pid for fp in found_people):
-                                    found_people.append({
-                                        'person_id': pid,
-                                        'name': name
-                                    })
-
-                        print(f"[CHAT_DIRECT] Total found_people: {len(found_people)}")
-                    except (json.JSONDecodeError, TypeError, AttributeError) as e:
-                        print(f"[CHAT_DIRECT] ERROR parsing {tool_name} result: {e}")
+                        # tool_args already parsed from tool_call.function.arguments
+                        people_from_report = tool_args.get("people", [])
+                        for p in people_from_report:
+                            if isinstance(p, dict):
+                                pid = p.get('person_id')
+                                name = p.get('name')
+                                if pid and name:
+                                    # Avoid duplicates
+                                    if not any(fp['person_id'] == pid for fp in found_people):
+                                        found_people.append({
+                                            'person_id': pid,
+                                            'name': name
+                                        })
+                        print(f"[CHAT_DIRECT] report_results: extracted {len(people_from_report)} people, total: {len(found_people)}")
+                    except (TypeError, AttributeError) as e:
+                        print(f"[CHAT_DIRECT] ERROR parsing report_results: {e}")
 
                 # Save tool response
                 supabase.table('chat_message').insert({
@@ -2203,6 +2219,39 @@ async def chat_direct(message: str, user_id: str, session_id: Optional[str] = No
             supabase.table('chat_session').update({
                 'updated_at': 'now()'
             }).eq('session_id', session_id).execute()
+
+            # If agent did searches but forgot to call report_results, retry once
+            if not found_people and iteration_count > 0:
+                print("[CHAT_DIRECT] Agent searched but didn't report_results, retrying...")
+                retry_messages = messages + [{
+                    "role": "user",
+                    "content": "You must call report_results with the people you found."
+                }]
+                retry_response = client.chat.completions.create(
+                    model="gpt-4o",
+                    messages=retry_messages,
+                    tools=TOOLS,
+                    tool_choice="auto",
+                    temperature=0.7
+                )
+                for tool_call in retry_response.choices[0].message.tool_calls or []:
+                    if tool_call.function.name == "report_results":
+                        try:
+                            args = json.loads(tool_call.function.arguments)
+                            people_from_retry = args.get("people", [])
+                            for p in people_from_retry:
+                                if isinstance(p, dict):
+                                    pid = p.get('person_id')
+                                    name = p.get('name')
+                                    if pid and name:
+                                        if not any(fp['person_id'] == pid for fp in found_people):
+                                            found_people.append({
+                                                'person_id': pid,
+                                                'name': name
+                                            })
+                            print(f"[CHAT_DIRECT] Retry got {len(people_from_retry)} people from report_results")
+                        except json.JSONDecodeError:
+                            pass
 
             # Tier 1 complete: offer "dig deeper" if we found people
             # Claude agent can explore name variations, company spellings, etc.
@@ -2253,6 +2302,12 @@ If results seem incomplete, investigate why. You have the tools to see what's th
 Use HTML for Telegram: <b>bold</b>, <i>italic</i>
 Format: 👤 <b>Name</b> + reason why relevant
 Respond in the user's language.
+
+CRITICAL RULE: After completing any search, you MUST call report_results with ALL people you found.
+- Extract person_id and name from the results of whatever tools you used
+- Deduplicate by person_id (same person may appear in multiple tool results)
+- The summary field should be a brief description for the user
+- If you found no people, call report_results with empty people array
 """
 
 

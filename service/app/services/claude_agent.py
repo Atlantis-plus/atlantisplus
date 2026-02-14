@@ -200,22 +200,12 @@ class ClaudeAgent:
                                 "result_preview": result[:200] if len(result) > 200 else result
                             })
 
-                            # Extract people from find_people results
-                            if tool_name == "find_people":
+                            # Extract people from report_results tool call
+                            if tool_name == "report_results":
                                 try:
-                                    result_data = json.loads(result)
-                                    people_list = []
-                                    if isinstance(result_data, list):
-                                        people_list = result_data
-                                    elif isinstance(result_data, dict):
-                                        people_list = result_data.get('people') or result_data.get('results') or []
-
-                                    for p in people_list:
-                                        if isinstance(p, dict):
-                                            pid = p.get('person_id')
-                                            name = p.get('name') or p.get('display_name')
-                                            if pid and name:
-                                                found_people.append({'person_id': pid, 'name': name})
+                                    # Claude returns input as dict, not string
+                                    args = tool_input if isinstance(tool_input, dict) else json.loads(tool_input)
+                                    found_people = args.get("people", [])
                                 except (json.JSONDecodeError, TypeError):
                                     pass
 
@@ -257,6 +247,24 @@ class ClaudeAgent:
                 for block in response.content:
                     if hasattr(block, "text"):
                         final_text += block.text
+
+                # If agent searched but didn't report results, ask once more
+                if not found_people and iteration > 1:
+                    print(f"[CLAUDE_AGENT] No people found, requesting report_results...")
+                    retry_response = self.client.messages.create(
+                        model=self.model,
+                        max_tokens=1024,
+                        system=self.system_prompt,
+                        messages=messages + [{"role": "assistant", "content": response.content}, {"role": "user", "content": "Please call report_results with all people you found."}],
+                        tools=self.tools
+                    )
+                    for block in retry_response.content:
+                        if block.type == "tool_use" and block.name == "report_results":
+                            try:
+                                found_people = block.input.get("people", [])
+                                print(f"[CLAUDE_AGENT] Extracted {len(found_people)} people from retry")
+                            except (AttributeError, TypeError):
+                                pass
 
                 print(f"[CLAUDE_AGENT] Finished after {iteration} iterations")
 
