@@ -442,7 +442,7 @@ Maria Petrova, Maria Podosenova, Maria Donskikh, etc. (19 total Maria variants)
 # Authentication
 curl -X POST http://localhost:8000/auth/telegram/test \
   -H "Content-Type: application/json" \
-  -H "X-Test-Secret: ***REMOVED***" \
+  -H "X-Test-Secret: dev-secret-123" \
   -d '{"telegram_id": 123456}'
 
 # Test query (OpenAI)

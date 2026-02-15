@@ -21,7 +21,7 @@ Database contains **2026 active people** with **21979 assertions** owned by user
 ```bash
 TOKEN=$(curl -s -X POST http://localhost:8000/auth/telegram/test \
   -H "Content-Type: application/json" \
-  -H "X-Test-Secret: ***REMOVED***" \
+  -H "X-Test-Secret: dev-secret-123" \
   -d '{"telegram_id": 58500313}' | python3 -c "import sys,json; print(json.load(sys.stdin)['access_token'])")
 ```
 
@@ -30,7 +30,7 @@ TOKEN=$(curl -s -X POST http://localhost:8000/auth/telegram/test \
 # DO NOT USE - creates different user with no data
 TOKEN=$(curl -s -X POST http://localhost:8000/auth/telegram/test \
   -H "Content-Type: application/json" \
-  -H "X-Test-Secret: ***REMOVED***" \
+  -H "X-Test-Secret: dev-secret-123" \
   -d '{"telegram_id": 123456}' | python3 -c "import sys,json; print(json.load(sys.stdin)['access_token'])")
 ```
 
@@ -256,7 +256,7 @@ Main owner has 2026 people but they're not returned.
 # Always start with this
 TOKEN=$(curl -s -X POST http://localhost:8000/auth/telegram/test \
   -H "Content-Type: application/json" \
-  -H "X-Test-Secret: ***REMOVED***" \
+  -H "X-Test-Secret: dev-secret-123" \
   -d '{"telegram_id": 58500313}' | python3 -c "import sys,json; print(json.load(sys.stdin)['access_token'])")
 ```
 
@@ -286,7 +286,7 @@ TOKEN=$(curl -s -X POST http://localhost:8000/auth/telegram/test \
 - **URL**: http://localhost:8000
 - **Environment**: test/development
 - **Test mode**: Enabled
-- **Test secret**: ***REMOVED***
+- **Test secret**: dev-secret-123
 
 ### Database
 - **Project**: mhdpokigbprnnwmsgzuy

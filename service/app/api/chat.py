@@ -4,12 +4,17 @@ from uuid import UUID
 import re
 import html
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
+from slowapi import Limiter
+from slowapi.util import get_remote_address
 import openai
 import json
 
 from app.config import get_settings
+
+# Rate limiter for expensive endpoints
+limiter = Limiter(key_func=get_remote_address)
 from app.supabase_client import get_supabase_admin
 from app.middleware.auth import verify_supabase_token, get_user_id
 from app.services.embedding import generate_embedding
@@ -1621,12 +1626,16 @@ async def execute_tool(tool_name: str, args: dict, user_id: str) -> str:
 
 
 @router.post("/chat", response_model=ChatResponse)
+@limiter.limit("20/minute")  # Rate limit: 20 requests per minute per IP
 async def chat(
-    request: ChatRequest,
+    request: Request,  # Required for rate limiter
+    chat_request: ChatRequest,
     token_payload: dict = Depends(verify_supabase_token)
 ):
     """
     Chat with the network agent. Maintains conversation history and can use tools.
+
+    Rate limited to 20 requests/minute to prevent API cost abuse.
     """
     settings = get_settings()
     user_id = get_user_id(token_payload)
@@ -1634,21 +1643,21 @@ async def chat(
     client = openai.OpenAI(api_key=settings.openai_api_key)
 
     # Get or create session
-    if request.session_id:
+    if chat_request.session_id:
         # Verify session belongs to user
         session_check = supabase.table('chat_session').select('session_id').eq(
-            'session_id', request.session_id
+            'session_id', chat_request.session_id
         ).eq('owner_id', user_id).execute()
 
         if not session_check.data:
             raise HTTPException(status_code=404, detail="Session not found")
 
-        session_id = request.session_id
+        session_id = chat_request.session_id
     else:
         # Create new session
         session = supabase.table('chat_session').insert({
             'owner_id': user_id,
-            'title': request.message[:50] + ('...' if len(request.message) > 50 else '')
+            'title': chat_request.message[:50] + ('...' if len(chat_request.message) > 50 else '')
         }).execute()
         session_id = session.data[0]['session_id']
 
@@ -1656,7 +1665,7 @@ async def chat(
     supabase.table('chat_message').insert({
         'session_id': session_id,
         'role': 'user',
-        'content': request.message
+        'content': chat_request.message
     }).execute()
 
     # Load conversation history

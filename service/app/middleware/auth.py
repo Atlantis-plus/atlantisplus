@@ -12,44 +12,31 @@ async def verify_supabase_token(
     """
     Validate Supabase JWT from Authorization header.
     Returns the decoded token payload with user info.
+
+    Security: Only HS256 algorithm is supported. RS256 requires JWKS
+    verification which is not implemented, so we reject it to prevent
+    signature bypass attacks.
     """
     settings = get_settings()
     token = credentials.credentials
 
-    # Try HS256 first (legacy), then RS256
-    algorithms_to_try = ["HS256", "RS256"]
-    last_error = None
-
-    for alg in algorithms_to_try:
-        try:
-            options = {"verify_aud": False}  # Supabase may not always set audience
-
-            if alg == "RS256":
-                # For RS256, decode without verification for now (MVP)
-                # In production, fetch JWKS from Supabase
-                payload = jwt.decode(
-                    token,
-                    settings.supabase_jwt_secret,
-                    algorithms=[alg],
-                    options={**options, "verify_signature": False}
-                )
-            else:
-                payload = jwt.decode(
-                    token,
-                    settings.supabase_jwt_secret,
-                    algorithms=[alg],
-                    options=options
-                )
-            return payload
-        except JWTError as e:
-            last_error = e
-            continue
-
-    # If all algorithms failed, raise the last error
-    raise HTTPException(
-        status_code=401,
-        detail=f"Invalid authentication token: {str(last_error)}"
-    )
+    try:
+        # Only allow HS256 - RS256 would require JWKS verification
+        # Rejecting RS256 prevents signature bypass attacks
+        payload = jwt.decode(
+            token,
+            settings.supabase_jwt_secret,
+            algorithms=["HS256"],  # Explicitly only HS256
+            options={"verify_aud": False}  # Supabase may not always set audience
+        )
+        return payload
+    except JWTError as e:
+        # Don't expose internal error details
+        print(f"[AUTH] JWT verification failed: {e}")
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid or expired authentication token"
+        )
 
 
 def get_user_id(token_payload: dict) -> str:

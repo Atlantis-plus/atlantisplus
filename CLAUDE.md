@@ -980,13 +980,13 @@ curl https://atlantisplus-production.up.railway.app/health/deep
 # 1. Start server with test mode enabled
 cd /Users/evgenyq/Projects/atlantisplus/service && \
   source venv/bin/activate && \
-  ENVIRONMENT=test TEST_MODE_ENABLED=true TEST_AUTH_SECRET=***REMOVED*** \
+  ENVIRONMENT=test TEST_MODE_ENABLED=true TEST_AUTH_SECRET=dev-secret-123 \
   uvicorn app.main:app --port 8000
 
 # 2. Get test token (bypasses Telegram HMAC validation)
 curl -X POST http://localhost:8000/auth/telegram/test \
   -H "Content-Type: application/json" \
-  -H "X-Test-Secret: ***REMOVED***" \
+  -H "X-Test-Secret: dev-secret-123" \
   -d '{"telegram_id": 123456}'
 
 # 3. Use token for authenticated API calls

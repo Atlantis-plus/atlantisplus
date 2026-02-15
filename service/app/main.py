@@ -1,8 +1,16 @@
 import asyncio
 from fastapi import FastAPI, Request, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
 
 from app.config import get_settings
+
+# Rate limiter - uses client IP by default
+# Limits are applied per-IP to prevent abuse
+limiter = Limiter(key_func=get_remote_address)
 from app.api.auth import router as auth_router
 from app.api.process import router as process_router
 from app.api.search import router as search_router
@@ -20,6 +28,10 @@ app = FastAPI(
     description="AI-first Personal Network Memory",
     version="0.1.0"
 )
+
+# Attach rate limiter to app
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 
 # Lifecycle events
@@ -115,8 +127,16 @@ async def telegram_webhook(
     """
     settings = get_settings()
 
-    # Verify secret token if configured
-    if settings.telegram_webhook_secret:
+    # SECURITY: Verify webhook secret token
+    # In production, secret is REQUIRED to prevent spoofed updates
+    if settings.environment == "production":
+        if not settings.telegram_webhook_secret:
+            print("[WEBHOOK] CRITICAL: TELEGRAM_WEBHOOK_SECRET not set in production!")
+            raise HTTPException(status_code=500, detail="Webhook misconfigured")
+        if x_telegram_bot_api_secret_token != settings.telegram_webhook_secret:
+            raise HTTPException(status_code=403, detail="Invalid secret token")
+    elif settings.telegram_webhook_secret:
+        # In dev/test, verify only if secret is configured
         if x_telegram_bot_api_secret_token != settings.telegram_webhook_secret:
             raise HTTPException(status_code=403, detail="Invalid secret token")
 

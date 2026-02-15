@@ -1,8 +1,13 @@
 import asyncio
 from typing import Optional
-from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
+from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, Request
+from slowapi import Limiter
+from slowapi.util import get_remote_address
 
 from app.config import get_settings
+
+# Rate limiter for expensive endpoints
+limiter = Limiter(key_func=get_remote_address)
 from app.supabase_client import get_supabase_admin
 from app.middleware.auth import verify_supabase_token, get_user_id
 from app.agents.schemas import (
@@ -183,16 +188,20 @@ async def process_pipeline(
 
 
 @router.post("/voice", response_model=ProcessResponse)
+@limiter.limit("10/minute")  # Rate limit: 10 voice notes per minute per IP
 async def process_voice(
-    request: ProcessVoiceRequest,
+    request: Request,  # Required for rate limiter
+    voice_request: ProcessVoiceRequest,
     background_tasks: BackgroundTasks,
     token_payload: dict = Depends(verify_supabase_token)
 ):
     """
     Process voice note from Supabase Storage.
     Transcribes audio, extracts information, and saves to database.
+
+    Rate limited to 10 requests/minute to prevent API cost abuse.
     """
-    print(f"[VOICE] Received request: storage_path={request.storage_path}")
+    print(f"[VOICE] Received request: storage_path={voice_request.storage_path}")
     user_id = get_user_id(token_payload)
     print(f"[VOICE] User ID: {user_id}")
     supabase = get_supabase_admin()
@@ -202,18 +211,19 @@ async def process_voice(
         "owner_id": user_id,
         "source_type": "voice_note",
         "content": "",  # Will be updated with transcript
-        "storage_path": request.storage_path,
+        "storage_path": voice_request.storage_path,
         "processing_status": "transcribing"
     }).execute()
 
     evidence_id = evidence_result.data[0]["evidence_id"]
+    storage_path = voice_request.storage_path  # Capture for closure
 
     async def process_voice_async():
         try:
             supabase_inner = get_supabase_admin()
 
             # Transcribe
-            transcript = await transcribe_from_storage(request.storage_path)
+            transcript = await transcribe_from_storage(storage_path)
 
             # Update evidence with transcript
             supabase_inner.table("raw_evidence").update({
@@ -221,7 +231,7 @@ async def process_voice(
             }).eq("evidence_id", evidence_id).execute()
 
             # Run extraction pipeline
-            await process_pipeline(evidence_id, user_id, transcript, is_voice=True, storage_path=request.storage_path)
+            await process_pipeline(evidence_id, user_id, transcript, is_voice=True, storage_path=storage_path)
 
         except Exception as e:
             supabase_inner = get_supabase_admin()
@@ -241,23 +251,28 @@ async def process_voice(
 
 
 @router.post("/text", response_model=ProcessResponse)
+@limiter.limit("20/minute")  # Rate limit: 20 text notes per minute per IP
 async def process_text(
-    request: ProcessTextRequest,
+    request: Request,  # Required for rate limiter
+    text_request: ProcessTextRequest,
     background_tasks: BackgroundTasks,
     token_payload: dict = Depends(verify_supabase_token)
 ):
     """
     Process text note.
     Extracts information and saves to database.
+
+    Rate limited to 20 requests/minute to prevent API cost abuse.
     """
     user_id = get_user_id(token_payload)
     supabase = get_supabase_admin()
+    text_content = text_request.text  # Capture for closure
 
     # Create raw_evidence record
     evidence_result = supabase.table("raw_evidence").insert({
         "owner_id": user_id,
         "source_type": "text_note",
-        "content": request.text,
+        "content": text_content,
         "processing_status": "extracting"
     }).execute()
 
@@ -266,7 +281,7 @@ async def process_text(
     async def process_text_async():
         print(f"[TEXT] Starting background processing for {evidence_id}")
         try:
-            await process_pipeline(evidence_id, user_id, request.text)
+            await process_pipeline(evidence_id, user_id, text_content)
             print(f"[TEXT] Completed processing for {evidence_id}")
         except Exception as e:
             print(f"[TEXT] Error processing {evidence_id}: {e}")

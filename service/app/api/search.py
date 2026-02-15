@@ -1,6 +1,8 @@
 from typing import Optional
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
+from slowapi import Limiter
+from slowapi.util import get_remote_address
 import openai
 import json
 
@@ -11,6 +13,9 @@ from app.services.embedding import generate_embedding
 from app.agents.prompts import REASONING_SYSTEM_PROMPT
 
 router = APIRouter(tags=["search"])
+
+# Rate limiter for expensive endpoints
+limiter = Limiter(key_func=get_remote_address)
 
 
 class SearchRequest(BaseModel):
@@ -32,19 +37,23 @@ class SearchResponse(BaseModel):
 
 
 @router.post("/search", response_model=SearchResponse)
+@limiter.limit("30/minute")  # Rate limit: 30 requests per minute per IP
 async def search_network(
-    request: SearchRequest,
+    request: Request,  # Required for rate limiter
+    search_request: SearchRequest,
     token_payload: dict = Depends(verify_supabase_token)
 ):
     """
     Search the user's network using semantic search and AI reasoning.
+
+    Rate limited to 30 requests/minute to prevent API cost abuse.
     """
     settings = get_settings()
     user_id = get_user_id(token_payload)
     supabase = get_supabase_admin()
 
     # 1. Generate embedding for the query
-    query_embedding = generate_embedding(request.query)
+    query_embedding = generate_embedding(search_search_request.query)
 
     # 2. Semantic search using pgvector
     # Call the match_assertions function
@@ -60,7 +69,7 @@ async def search_network(
 
     if not match_result.data:
         return SearchResponse(
-            query=request.query,
+            query=search_request.query,
             results=[],
             reasoning_summary="No relevant information found in your network."
         )
@@ -150,7 +159,7 @@ async def search_network(
     # 8. Use GPT-4o for reasoning with improved prompt
     client = openai.OpenAI(api_key=settings.openai_api_key)
 
-    reasoning_prompt = f"""User's question: "{request.query}"
+    reasoning_prompt = f"""User's question: "{search_request.query}"
 
 People and facts from their network:
 {context}
@@ -212,7 +221,7 @@ Respond in the same language as the user's question.
                 ))
 
         return SearchResponse(
-            query=request.query,
+            query=search_request.query,
             results=results,
             reasoning_summary=result_data.get('reasoning_summary', '')
         )
@@ -235,7 +244,7 @@ Respond in the same language as the user's question.
         results.sort(key=lambda x: x.relevance_score, reverse=True)
 
         return SearchResponse(
-            query=request.query,
+            query=search_request.query,
             results=results[:5],
             reasoning_summary="Search completed (AI reasoning unavailable)"
         )

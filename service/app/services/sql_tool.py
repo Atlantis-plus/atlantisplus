@@ -53,7 +53,17 @@ BLOCKED_PATTERNS = [
     r'\bsupabase_',        # Supabase internal
     r'\bextensions\.',     # Extensions schema
     r'\b_',                # Internal tables starting with _
+    r'\bpublic\.',         # SECURITY: Block direct schema access (bypasses CTE filter)
 ]
+
+# Protected CTE names that cannot be redefined by user queries
+# These are defined in add_owner_filter() and provide security filtering
+PROTECTED_CTE_NAMES = {
+    'person', 'assertion', 'identity', 'edge', 'raw_evidence',
+    'import_batch', 'enrichment_job', 'enrichment_quota',
+    'proactive_question', 'person_match_candidate',
+    'chat_session', 'chat_message',
+}
 
 # SQL keywords that indicate write operations
 WRITE_KEYWORDS = [
@@ -244,7 +254,19 @@ def validate_query(query: str) -> ValidationResult:
                     "Invalid UNION query structure."
                 )
 
-    # 8. Ensure LIMIT exists or add it
+    # 8. SECURITY: Check for CTE redefinition attacks
+    # User queries cannot redefine our security CTEs (would shadow owner_id filtering)
+    cte_pattern = r'\bWITH\s+(\w+)\s+AS\s*\('
+    for match in re.finditer(cte_pattern, query, re.IGNORECASE):
+        cte_name = match.group(1).lower()
+        if cte_name in PROTECTED_CTE_NAMES:
+            return ValidationResult(
+                False,
+                f"Cannot use reserved name '{cte_name}' in WITH clause. "
+                f"These names are reserved for security filtering."
+            )
+
+    # 9. Ensure LIMIT exists or add it
     sanitized = query_stripped
     if not re.search(r'\bLIMIT\s+\d+', query_normalized):
         sanitized = f"{sanitized} LIMIT {MAX_ROWS}"
@@ -593,6 +615,14 @@ INVALID_QUERY_EXAMPLES = [
     ("SELECT * FROM auth.users", "Access to system tables not allowed"),
     ("SELECT * FROM pg_catalog.pg_tables", "Access to system tables not allowed"),
     ("SELECT * FROM information_schema.tables", "Access to system tables not allowed"),
+
+    # SECURITY: Direct schema access (bypasses CTE filter)
+    ("SELECT * FROM public.person", "Block direct schema access"),
+    ("SELECT * FROM public.assertion WHERE predicate = 'works_at'", "Block direct schema access"),
+
+    # SECURITY: CTE shadowing attack (redefine protected CTEs)
+    ("WITH person AS (SELECT * FROM public.person) SELECT * FROM person", "Cannot use reserved name"),
+    ("WITH assertion AS (SELECT 1) SELECT * FROM assertion", "Cannot use reserved name"),
 
     # Multiple statements
     ("SELECT 1; SELECT 2", "Multiple statements not allowed"),

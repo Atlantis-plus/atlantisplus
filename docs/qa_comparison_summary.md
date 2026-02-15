@@ -214,7 +214,7 @@ uvicorn app.main:app --port 8000
 # Get test token
 curl -X POST http://localhost:8000/auth/telegram/test \
   -H "Content-Type: application/json" \
-  -H "X-Test-Secret: ***REMOVED***" \
+  -H "X-Test-Secret: dev-secret-123" \
   -d '{"telegram_id": 123456}'
 ```
 

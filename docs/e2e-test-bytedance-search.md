@@ -14,7 +14,7 @@ The ByteDance search feature **is working correctly** but the test failed becaus
 ```bash
 cd /Users/evgenyq/Projects/atlantisplus/service
 source venv/bin/activate
-ENVIRONMENT=test TEST_MODE_ENABLED=true TEST_AUTH_SECRET=***REMOVED*** \
+ENVIRONMENT=test TEST_MODE_ENABLED=true TEST_AUTH_SECRET=dev-secret-123 \
   uvicorn app.main:app --host 127.0.0.1 --port 8000
 ```
 
@@ -23,14 +23,14 @@ ENVIRONMENT=test TEST_MODE_ENABLED=true TEST_AUTH_SECRET=***REMOVED*** \
 # Test User 1 (telegram_id: 123456789)
 curl -X POST http://localhost:8000/auth/telegram/test \
   -H "Content-Type: application/json" \
-  -H "X-Test-Secret: ***REMOVED***" \
+  -H "X-Test-Secret: dev-secret-123" \
   -d '{"telegram_id": 123456789}'
 # Result: user_id = a4f42a2c-8096-4fbf-ae70-7048e6404a83
 
 # Test User 2 (telegram_id: 987654321)
 curl -X POST http://localhost:8000/auth/telegram/test \
   -H "Content-Type: application/json" \
-  -H "X-Test-Secret: ***REMOVED***" \
+  -H "X-Test-Secret: dev-secret-123" \
   -d '{"telegram_id": 987654321}'
 # Result: user_id = a299d463-b12d-4ddd-85b7-03c65d0dab61
 ```

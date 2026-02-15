@@ -60,7 +60,7 @@ Claude provides total count context (17 total Sergeys), which is more informativ
 ```bash
 TOKEN=$(curl -s -X POST http://localhost:8000/auth/telegram/test \
   -H "Content-Type: application/json" \
-  -H "X-Test-Secret: ***REMOVED***" \
+  -H "X-Test-Secret: dev-secret-123" \
   -d '{"telegram_id": 123456}' | python3 -c "import sys,json; print(json.load(sys.stdin)['access_token'])")
 ```
 

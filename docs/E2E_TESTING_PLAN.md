@@ -181,12 +181,12 @@ test('navigate all pages', async ({ authenticatedPage }) => {
 # Backend (в одном терминале)
 cd /Users/evgenyq/Projects/atlantisplus/service
 source venv/bin/activate
-ENVIRONMENT=development TEST_MODE_ENABLED=true TEST_AUTH_SECRET=***REMOVED*** \
+ENVIRONMENT=development TEST_MODE_ENABLED=true TEST_AUTH_SECRET=dev-secret-123 \
   uvicorn app.main:app --port 8000
 
 # Frontend (в другом терминале)
 cd /Users/evgenyq/Projects/atlantisplus/frontend
-VITE_TEST_AUTH_SECRET=***REMOVED*** npm run dev
+VITE_TEST_AUTH_SECRET=dev-secret-123 npm run dev
 
 # E2E тесты (в третьем терминале)
 cd /Users/evgenyq/Projects/atlantisplus/e2e
