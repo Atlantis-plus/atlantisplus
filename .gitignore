@@ -1,7 +1,13 @@
-# Environment files
+# Environment files (NEVER commit secrets!)
 .env
-.env.local
-.env.*.local
+.env.*
+!.env.example
+**/.env
+**/.env.*
+!**/.env.example
+
+# QA scripts with potential secrets
+qa_*.py
 
 # Python
 __pycache__/
