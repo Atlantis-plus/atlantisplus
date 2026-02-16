@@ -106,20 +106,6 @@ class ProactiveNotificationService:
 
         return notifications_sent
 
-    async def notify_extraction_summary(
-        self,
-        user_id: str,
-        people_names: list[str],
-        assertions_count: int
-    ) -> bool:
-        """
-        Send a summary of what was extracted (optional, for rich notes).
-        Currently handled in handlers.py directly.
-        """
-        # This is a placeholder for more sophisticated summaries
-        # For now, handlers.py sends the summary directly
-        return True
-
     async def send_import_report(
         self,
         user_id: str,

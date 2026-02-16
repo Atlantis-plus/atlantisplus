@@ -1,4 +1,3 @@
-import asyncio
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, Request
 from slowapi import Limiter
@@ -17,9 +16,8 @@ from app.agents.schemas import (
     ExtractionResult
 )
 from app.services.transcription import transcribe_from_storage
-from app.services.extraction import extract_from_text_simple
+from app.services.extraction import extract_from_text_simple, process_extraction_result
 from app.services.embedding import generate_embeddings_batch, create_assertion_text
-from app.utils import normalize_linkedin_url
 
 router = APIRouter(prefix="/process", tags=["process"])
 
@@ -54,123 +52,14 @@ async def process_pipeline(
         extraction = extract_from_text_simple(content)
         print(f"[PIPELINE] Extracted {len(extraction.people)} people, {len(extraction.assertions)} assertions")
 
-        # Create person records and map temp_ids to real UUIDs
-        person_map: dict[str, str] = {}  # temp_id -> person_id
-
-        for person in extraction.people:
-            # Create person
-            person_result = supabase.table("person").insert({
-                "owner_id": user_id,
-                "display_name": person.name,
-                "status": "active"
-            }).execute()
-
-            person_id = person_result.data[0]["person_id"]
-            person_map[person.temp_id] = person_id
-
-            # Create identities for name variations
-            identities = [{"person_id": person_id, "namespace": "freeform_name", "value": person.name}]
-
-            for variation in person.name_variations:
-                if variation and variation != person.name:
-                    identities.append({
-                        "person_id": person_id,
-                        "namespace": "freeform_name",
-                        "value": variation
-                    })
-
-            # Add identifiers (with normalization)
-            if person.identifiers.telegram:
-                # Strip @ prefix if present
-                tg_value = person.identifiers.telegram.lstrip('@')
-                if tg_value:
-                    identities.append({
-                        "person_id": person_id,
-                        "namespace": "telegram_username",
-                        "value": tg_value
-                    })
-            if person.identifiers.email:
-                # Normalize to lowercase for consistent dedup
-                identities.append({
-                    "person_id": person_id,
-                    "namespace": "email",  # Consistent with import_linkedin.py
-                    "value": person.identifiers.email.lower()
-                })
-            if person.identifiers.linkedin:
-                normalized_linkedin = normalize_linkedin_url(person.identifiers.linkedin)
-                if normalized_linkedin:
-                    identities.append({
-                        "person_id": person_id,
-                        "namespace": "linkedin_url",
-                        "value": normalized_linkedin
-                    })
-            if person.identifiers.phone:
-                # Basic phone normalization: keep only digits and leading +
-                phone_value = person.identifiers.phone
-                if phone_value:
-                    # Remove common formatting chars but keep + for international
-                    normalized = ''.join(c for c in phone_value if c.isdigit() or c == '+')
-                    if normalized:
-                        identities.append({
-                            "person_id": person_id,
-                            "namespace": "phone",
-                            "value": normalized
-                        })
-
-            # Insert identities (ignore conflicts on unique constraint)
-            for identity in identities:
-                try:
-                    supabase.table("identity").insert(identity).execute()
-                except Exception:
-                    pass  # Ignore duplicate identities
-
-        # Prepare assertions with embeddings
-        if extraction.assertions:
-            # Generate texts for embedding
-            assertion_texts = []
-            for assertion in extraction.assertions:
-                person_name = ""
-                for p in extraction.people:
-                    if p.temp_id == assertion.subject:
-                        person_name = p.name
-                        break
-                text = create_assertion_text(assertion.predicate, assertion.value, person_name)
-                assertion_texts.append(text)
-
-            # Generate embeddings in batch
-            embeddings = generate_embeddings_batch(assertion_texts)
-
-            # Insert assertions with embeddings
-            for i, assertion in enumerate(extraction.assertions):
-                person_id = person_map.get(assertion.subject)
-                if not person_id:
-                    continue
-
-                supabase.table("assertion").insert({
-                    "subject_person_id": person_id,
-                    "predicate": assertion.predicate,
-                    "object_value": assertion.value,
-                    "confidence": assertion.confidence,
-                    "evidence_id": evidence_id,
-                    "scope": "personal",
-                    "embedding": embeddings[i] if i < len(embeddings) else None
-                }).execute()
-
-        # Create edges
-        for edge in extraction.edges:
-            src_id = person_map.get(edge.source)
-            dst_id = person_map.get(edge.target)
-
-            if src_id and dst_id and src_id != dst_id:
-                try:
-                    supabase.table("edge").insert({
-                        "src_person_id": src_id,
-                        "dst_person_id": dst_id,
-                        "edge_type": edge.type,
-                        "scope": "personal"
-                    }).execute()
-                except Exception:
-                    pass  # Ignore edge errors
+        # Process extraction using shared function
+        result = process_extraction_result(
+            supabase=supabase,
+            user_id=user_id,
+            evidence_id=evidence_id,
+            extraction=extraction
+        )
+        print(f"[PIPELINE] Created {result.people_count} people, {result.assertions_count} assertions, {result.edges_count} edges")
 
         # Update evidence status to done
         supabase.table("raw_evidence").update({

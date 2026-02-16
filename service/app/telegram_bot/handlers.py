@@ -38,8 +38,7 @@ from .telegram_api import (
 from .logging_config import bot_logger as logger
 
 # Direct imports of business logic
-from app.services.extraction import extract_from_text_simple
-from app.services.embedding import generate_embeddings_batch, create_assertion_text
+from app.services.extraction import extract_from_text_simple, process_extraction_result
 from app.services.transcription import transcribe_from_storage
 from app.services.proactive import get_proactive_service
 from app.supabase_client import get_supabase_admin
@@ -215,96 +214,27 @@ async def handle_note_message_direct(chat_id: int, text: str, user_id: str) -> N
         extraction = extract_from_text_simple(text)
         logger.info(f"Extracted {len(extraction.people)} people, {len(extraction.assertions)} assertions")
 
-        # 3. Create person records and map temp_ids to real UUIDs
-        person_map: dict[str, str] = {}  # temp_id -> person_id
+        # 3. Process extraction: create persons, identities, assertions, edges
+        # Uses shared function to avoid code duplication with process.py
+        result = process_extraction_result(
+            supabase=supabase,
+            user_id=user_id,
+            evidence_id=evidence_id,
+            extraction=extraction,
+            logger=logger
+        )
+        person_map = result.person_map
 
-        for person in extraction.people:
-            # Create person
-            person_result = supabase.table("person").insert({
-                "owner_id": user_id,
-                "display_name": person.name,
-                "status": "active"
-            }).execute()
-
-            person_id = person_result.data[0]["person_id"]
-            person_map[person.temp_id] = person_id
-
-            # Create identities for name variations
-            identities = [{"person_id": person_id, "namespace": "freeform_name", "value": person.name}]
-
-            for variation in person.name_variations:
-                if variation and variation != person.name:
-                    identities.append({
-                        "person_id": person_id,
-                        "namespace": "freeform_name",
-                        "value": variation
-                    })
-
-            # Insert identities
-            for identity in identities:
-                try:
-                    supabase.table("identity").insert(identity).execute()
-                except Exception:
-                    pass  # Ignore duplicate identities
-
-        # 4. Create assertions with embeddings
-        if extraction.assertions:
-            # Generate texts for embedding
-            assertion_texts = []
-            for assertion in extraction.assertions:
-                person_name = ""
-                for p in extraction.people:
-                    if p.temp_id == assertion.subject:
-                        person_name = p.name
-                        break
-                text_for_embedding = create_assertion_text(assertion.predicate, assertion.value, person_name)
-                assertion_texts.append(text_for_embedding)
-
-            # Generate embeddings in batch
-            embeddings = generate_embeddings_batch(assertion_texts)
-
-            # Insert assertions with embeddings
-            for i, assertion in enumerate(extraction.assertions):
-                person_id = person_map.get(assertion.subject)
-                if not person_id:
-                    continue
-
-                supabase.table("assertion").insert({
-                    "subject_person_id": person_id,
-                    "predicate": assertion.predicate,
-                    "object_value": assertion.value,
-                    "confidence": assertion.confidence,
-                    "evidence_id": evidence_id,
-                    "scope": "personal",
-                    "embedding": embeddings[i] if i < len(embeddings) else None
-                }).execute()
-
-        # 5. Create edges
-        for edge in extraction.edges:
-            src_id = person_map.get(edge.source)
-            dst_id = person_map.get(edge.target)
-
-            if src_id and dst_id and src_id != dst_id:
-                try:
-                    supabase.table("edge").insert({
-                        "src_person_id": src_id,
-                        "dst_person_id": dst_id,
-                        "edge_type": edge.type,
-                        "scope": "personal"
-                    }).execute()
-                except Exception:
-                    pass  # Ignore edge errors
-
-        # 6. Update evidence status to done
+        # 4. Update evidence status to done
         supabase.table("raw_evidence").update({
             "processed": True,
             "processing_status": "done"
         }).eq("evidence_id", evidence_id).execute()
 
-        logger.info(f"Successfully processed note: {len(extraction.people)} people, {len(extraction.assertions)} assertions")
+        logger.info(f"Successfully processed note: {result.people_count} people, {result.assertions_count} assertions")
 
         # Send success message
-        people_names = ", ".join([p.name for p in extraction.people])
+        people_names = ", ".join(result.people_names)
         await send_message(
             chat_id,
             f"✅ Done! Extracted:\n"

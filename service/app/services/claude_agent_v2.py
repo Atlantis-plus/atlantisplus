@@ -468,28 +468,3 @@ class ClaudeAgentV2:
         return serialized
 
 
-# =============================================================================
-# CONVENIENCE FUNCTION
-# =============================================================================
-
-async def run_search_agent(
-    query: str,
-    user_id: str,
-    execute_tool_fn: Callable
-) -> AgentResult:
-    """
-    Run search agent for a user query.
-
-    Args:
-        query: Search query
-        user_id: User UUID
-        execute_tool_fn: Tool executor function
-
-    Returns:
-        AgentResult with found people
-    """
-    agent = ClaudeAgentV2(
-        user_id=user_id,
-        execute_tool_fn=execute_tool_fn
-    )
-    return await agent.run(query)

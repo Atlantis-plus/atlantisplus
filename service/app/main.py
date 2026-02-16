@@ -13,7 +13,6 @@ from app.config import get_settings
 limiter = Limiter(key_func=get_remote_address)
 from app.api.auth import router as auth_router
 from app.api.process import router as process_router
-from app.api.search import router as search_router
 from app.api.chat import router as chat_router
 from app.api.questions import router as questions_router
 from app.api.dedup import router as dedup_router
@@ -163,7 +162,6 @@ async def telegram_webhook(
 # Include routers
 app.include_router(auth_router)
 app.include_router(process_router)
-app.include_router(search_router)
 app.include_router(chat_router)
 app.include_router(questions_router)
 app.include_router(dedup_router)

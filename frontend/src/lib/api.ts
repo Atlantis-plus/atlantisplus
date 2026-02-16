@@ -87,10 +87,6 @@ class ApiClient {
     }
   }
 
-  async healthCheck(): Promise<{ status: string; environment: string; version: string }> {
-    return this.request('/health');
-  }
-
   async authTelegram(initData: string): Promise<AuthResponse> {
     return this.request('/auth/telegram', {
       method: 'POST',
@@ -109,32 +105,6 @@ class ApiClient {
     return this.request('/process/text', {
       method: 'POST',
       body: JSON.stringify({ text })
-    });
-  }
-
-  async getProcessingStatus(evidenceId: string): Promise<{
-    evidence_id: string;
-    status: string;
-    processed: boolean;
-    error_message?: string;
-  }> {
-    return this.request(`/process/status/${evidenceId}`);
-  }
-
-  async search(query: string): Promise<{
-    query: string;
-    results: Array<{
-      person_id: string;
-      display_name: string;
-      relevance_score: number;
-      reasoning: string;
-      matching_facts: string[];
-    }>;
-    reasoning_summary: string;
-  }> {
-    return this.request('/search', {
-      method: 'POST',
-      body: JSON.stringify({ query })
     });
   }
 
