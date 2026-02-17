@@ -11,7 +11,7 @@ async def download_audio_from_storage(storage_path: str, supabase_url: str, serv
     async with httpx.AsyncClient() as client:
         response = await client.get(
             url,
-            headers={"Authorization": f"Bearer {service_key}"}
+            headers={"apikey": service_key}
         )
         response.raise_for_status()
         return response.content
