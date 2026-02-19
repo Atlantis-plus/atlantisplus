@@ -52,6 +52,20 @@ from app.api.chat import chat_direct, chat_dig_deeper
 PENDING_DIG_DEEPER_QUERIES: dict[str, str] = {}
 
 
+def log_query(user_id: str, query_text: str, tier: int = 1, results_count: int = 0) -> None:
+    """Log search query to database. Fire-and-forget, never raises."""
+    try:
+        supabase = get_supabase_admin()
+        supabase.table("query_log").insert({
+            "user_id": user_id,
+            "query_text": query_text,
+            "tier": tier,
+            "results_count": results_count
+        }).execute()
+    except Exception as e:
+        logger.warning(f"Failed to log query: {e}")
+
+
 async def handle_start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle /start command."""
     user = update.effective_user
@@ -296,6 +310,9 @@ async def handle_chat_message_direct(chat_id: int, text: str, user_id: str, user
 
         # TIER 1: Fast search via OpenAI
         result = await chat_direct(text, user_id, session_id)
+
+        # Log the query
+        log_query(user_id, text, tier=1, results_count=len(result.people) if result.people else 0)
 
         # Update context with session_id (use user_id, not chat_id!)
         await set_active_session(user_id, result.session_id)
@@ -604,6 +621,9 @@ async def handle_dig_deeper_callback(
     try:
         # TIER 2: Claude agent deep search
         result = await chat_dig_deeper(original_query, user_id)
+
+        # Log the query
+        log_query(user_id, original_query, tier=2, results_count=len(result.people) if result.people else 0)
 
         # Send results
         if result.people:
