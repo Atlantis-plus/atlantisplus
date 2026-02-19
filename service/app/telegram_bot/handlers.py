@@ -297,8 +297,8 @@ async def handle_chat_message_direct(chat_id: int, text: str, user_id: str, user
         # TIER 1: Fast search via OpenAI
         result = await chat_direct(text, user_id, session_id)
 
-        # Update context with session_id
-        await set_active_session(str(chat_id), result.session_id)
+        # Update context with session_id (use user_id, not chat_id!)
+        await set_active_session(user_id, result.session_id)
 
         # If people found AND dig deeper is available, add the button
         if result.people and result.can_dig_deeper:

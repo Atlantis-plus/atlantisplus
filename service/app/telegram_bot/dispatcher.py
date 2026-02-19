@@ -36,8 +36,12 @@ async def classify_message(text: str, context: dict) -> str:
 Message: "{text}"
 
 Categories:
-- "note": User is sharing facts about people (e.g., "Вася работает в Google", "Познакомился с Петей")
-- "query": User is asking a question or wants to search (e.g., "Кто работает в Google?", "Найди эксперта")
+- "note": User is SHARING or ADDING facts about people they know
+  Examples: "Вася работает в Google", "Познакомился с Петей", "add a note: Leo is a lawyer", "запомни: Маша из Яндекса"
+- "query": User is ASKING a question or SEARCHING their network
+  Examples: "Кто работает в Google?", "Найди эксперта", "who can help with X?"
+
+If the message CONTAINS facts about a person (name + info), it's a "note", even if phrased as a command.
 
 Return ONLY one word: "note" or "query"
 '''
