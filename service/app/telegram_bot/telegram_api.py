@@ -146,6 +146,7 @@ async def send_message_with_web_app_buttons(
         Response dict with message_id
     """
     settings = get_settings()
+    print(f"[WEB_APP_BUTTONS] Using mini_app_url: {settings.mini_app_url}")
 
     url = f"https://api.telegram.org/bot{settings.telegram_bot_token}/sendMessage"
 
