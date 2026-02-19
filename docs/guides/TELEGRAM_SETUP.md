@@ -146,7 +146,7 @@ AI-first Personal Network Memory. Помогает power-коннекторам 
 ```
 /setmenubutton
 
-URL: https://evgenyq.github.io/atlantisplus/
+URL: https://atlantisplus.pages.dev
 Text: 👥 Каталог контактов
 ```
 

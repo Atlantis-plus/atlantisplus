@@ -911,33 +911,23 @@ railway open
 # - PDL_API_KEY (опционально, для People Data Labs enrichment)
 ```
 
-### Frontend (GitHub Pages)
+### Frontend (Cloudflare Pages)
 
-**ВАЖНО: Деплой через GitHub Actions, НЕ через gh-pages!**
-
-GitHub Pages настроен на `build_type: workflow` — деплой происходит автоматически
-при пуше в main через GitHub Actions workflow "Deploy Frontend to GitHub Pages".
+Frontend хостится на Cloudflare Pages с автоматическим деплоем при пуше в main.
 
 ```bash
-# GitHub repo: evgenyq/atlantisplus
-# URL: https://evgenyq.github.io/atlantisplus/
+# GitHub repo: Atlantis-plus/atlantisplus
+# URL: https://atlantisplus.pages.dev
 
-# ПРАВИЛЬНЫЙ способ деплоя frontend:
+# Деплой происходит автоматически при пуше в main
 cd /Users/evgenyq/Projects/atlantisplus
 git add frontend/
 git commit -m "feat: description of changes"
 git push origin main
-# GitHub Actions автоматически соберёт и задеплоит
+# Cloudflare Pages автоматически соберёт и задеплоит
 
-# НЕПРАВИЛЬНО (не работает!):
-# npm run deploy  # пушит в gh-pages branch, но сайт оттуда НЕ раздаётся
-
-# Проверить статус деплоя:
-gh run list --limit 3
-
-# VITE_API_URL (в frontend/.env):
-# Production: https://atlantisplus-production.up.railway.app
-# Local dev: http://localhost:8000
+# Environment variables (настроены в Cloudflare Dashboard):
+# VITE_SUPABASE_URL, VITE_SUPABASE_ANON_KEY, VITE_API_URL
 ```
 
 ### Supabase
@@ -956,12 +946,12 @@ supabase migration list
 ### Telegram Bot
 ```
 Bot: @atlantisplus_bot
-Mini App URL: https://evgenyq.github.io/atlantisplus/
+Mini App URL: https://atlantisplus.pages.dev
 
 Настройка в BotFather:
 1. /mybots → @atlantisplus_bot
 2. Bot Settings → Menu Button → Configure
-3. URL: https://evgenyq.github.io/atlantisplus/
+3. URL: https://atlantisplus.pages.dev
 ```
 
 ---

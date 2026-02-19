@@ -18,6 +18,7 @@ class Settings(BaseSettings):
     # Telegram
     telegram_bot_token: str
     telegram_webhook_secret: str = ""  # Optional: for webhook verification
+    mini_app_url: str = "https://atlantisplus.pages.dev"  # Cloudflare Pages URL
 
     # Environment
     environment: str = "development"

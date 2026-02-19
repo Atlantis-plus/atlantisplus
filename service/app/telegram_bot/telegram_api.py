@@ -159,7 +159,7 @@ async def send_message_with_web_app_buttons(
             name = name[:27] + "..."
 
         # Mini App URL with startapp parameter for deep linking
-        web_app_url = f"https://evgenyq.github.io/atlantisplus/?startapp=person_{person_id}"
+        web_app_url = f"{settings.mini_app_url}?startapp=person_{person_id}"
 
         buttons.append([{
             "text": f"👤 {name}",
@@ -170,7 +170,7 @@ async def send_message_with_web_app_buttons(
     if people:
         buttons.append([{
             "text": "📋 Open Full Catalog",
-            "web_app": {"url": "https://evgenyq.github.io/atlantisplus/"}
+            "web_app": {"url": settings.mini_app_url}
         }])
 
     payload = {
@@ -241,7 +241,7 @@ async def send_message_with_dig_deeper(
         if len(name) > 30:
             name = name[:27] + "..."
 
-        web_app_url = f"https://evgenyq.github.io/atlantisplus/?startapp=person_{person_id}"
+        web_app_url = f"{settings.mini_app_url}?startapp=person_{person_id}"
         buttons.append([{
             "text": f"👤 {name}",
             "web_app": {"url": web_app_url}
@@ -251,7 +251,7 @@ async def send_message_with_dig_deeper(
     if people:
         buttons.append([{
             "text": "📋 Open Full Catalog",
-            "web_app": {"url": "https://evgenyq.github.io/atlantisplus/"}
+            "web_app": {"url": settings.mini_app_url}
         }])
 
     # Add "Dig deeper" button with callback
