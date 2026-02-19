@@ -52,16 +52,19 @@ from app.api.chat import chat_direct, chat_dig_deeper
 PENDING_DIG_DEEPER_QUERIES: dict[str, str] = {}
 
 
-def log_query(user_id: str, query_text: str, tier: int = 1, results_count: int = 0) -> None:
+def log_query(user_id: str, query_text: str, tier: int = 1, results_count: int = 0, tg_username: str = None) -> None:
     """Log search query to database. Fire-and-forget, never raises."""
     try:
         supabase = get_supabase_admin()
-        supabase.table("query_log").insert({
+        data = {
             "user_id": user_id,
             "query_text": query_text,
             "tier": tier,
             "results_count": results_count
-        }).execute()
+        }
+        if tg_username:
+            data["tg_username"] = tg_username
+        supabase.table("query_log").insert(data).execute()
     except Exception as e:
         logger.warning(f"Failed to log query: {e}")
 
@@ -181,7 +184,8 @@ async def handle_text_message(update: Update, context: ContextTypes.DEFAULT_TYPE
         else:  # "query" or "dialog"
             # Direct call to chat logic
             await handle_chat_message_direct(
-                chat_id, message_text, supabase_user["user_id"], user_context
+                chat_id, message_text, supabase_user["user_id"], user_context,
+                tg_username=user.username
             )
     except Exception as e:
         logger.error(f"Handler error: {e}", exc_info=True)
@@ -288,7 +292,7 @@ async def handle_note_message_direct(chat_id: int, text: str, user_id: str) -> N
         )
 
 
-async def handle_chat_message_direct(chat_id: int, text: str, user_id: str, user_context: dict) -> None:
+async def handle_chat_message_direct(chat_id: int, text: str, user_id: str, user_context: dict, tg_username: str = None) -> None:
     """
     Handle query/dialog message - TIER 1 (fast search).
 
@@ -299,7 +303,7 @@ async def handle_chat_message_direct(chat_id: int, text: str, user_id: str, user
 
     Direct call to chat agent with tool use - NO HTTP!
     """
-    logger.info(f"Processing chat query for user_id={user_id}")
+    logger.info(f"Processing chat query for user_id={user_id}, tg_username={tg_username}")
 
     # Show typing indicator
     await send_chat_action(chat_id, "typing")
@@ -312,7 +316,7 @@ async def handle_chat_message_direct(chat_id: int, text: str, user_id: str, user
         result = await chat_direct(text, user_id, session_id)
 
         # Log the query
-        log_query(user_id, text, tier=1, results_count=len(result.people) if result.people else 0)
+        log_query(user_id, text, tier=1, results_count=len(result.people) if result.people else 0, tg_username=tg_username)
 
         # Update context with session_id (use user_id, not chat_id!)
         await set_active_session(user_id, result.session_id)
@@ -487,7 +491,8 @@ async def handle_voice_message(update: Update, context: ContextTypes.DEFAULT_TYP
                 chat_id,
                 transcript,
                 supabase_user["user_id"],
-                user_context
+                user_context,
+                tg_username=user.username
             )
 
             logger.info(f"Successfully processed voice query")
@@ -535,7 +540,8 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
     # Handle "Dig deeper" callback — TIER 2 SEARCH
     if callback_data.startswith("dig:"):
         await handle_dig_deeper_callback(
-            query, supabase_user["user_id"], callback_data, chat_id
+            query, supabase_user["user_id"], callback_data, chat_id,
+            tg_username=user.username
         )
         return
 
@@ -562,7 +568,8 @@ async def handle_dig_deeper_callback(
     query,
     user_id: str,
     callback_data: str,
-    chat_id: int
+    chat_id: int,
+    tg_username: str = None
 ) -> None:
     """
     Handle "Dig deeper" button callback — TIER 2 SEARCH.
@@ -623,7 +630,7 @@ async def handle_dig_deeper_callback(
         result = await chat_dig_deeper(original_query, user_id)
 
         # Log the query
-        log_query(user_id, original_query, tier=2, results_count=len(result.people) if result.people else 0)
+        log_query(user_id, original_query, tier=2, results_count=len(result.people) if result.people else 0, tg_username=tg_username)
 
         # Send results
         if result.people:
