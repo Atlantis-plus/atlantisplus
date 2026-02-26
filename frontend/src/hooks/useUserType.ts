@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { api } from '../lib/api';
 import type { UserInfo } from '../lib/api';
 
@@ -26,18 +26,21 @@ export const useUserType = (): UseUserTypeResult => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const fetchUserInfo = async () => {
+  const fetchUserInfo = useCallback(async () => {
     // Only fetch if we have an access token
     if (!api.hasAccessToken()) {
+      console.log('[useUserType] No access token yet, skipping fetch');
       setLoading(false);
       return;
     }
 
+    console.log('[useUserType] Fetching user info...');
     setLoading(true);
     setError(null);
 
     try {
       const info = await api.getUserInfo();
+      console.log('[useUserType] Got user info:', info.user_type);
       setUserInfo(info);
     } catch (err) {
       console.error('[useUserType] Failed to fetch user info:', err);
@@ -45,11 +48,35 @@ export const useUserType = (): UseUserTypeResult => {
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
+  // Initial fetch
   useEffect(() => {
     fetchUserInfo();
-  }, []);
+  }, [fetchUserInfo]);
+
+  // Re-fetch when access token becomes available
+  // Poll briefly to catch when useAuth sets the token
+  useEffect(() => {
+    if (userInfo) return; // Already have data
+
+    let attempts = 0;
+    const maxAttempts = 10;
+
+    const interval = setInterval(() => {
+      attempts++;
+      if (api.hasAccessToken() && !userInfo) {
+        console.log('[useUserType] Token now available, fetching...');
+        fetchUserInfo();
+        clearInterval(interval);
+      } else if (attempts >= maxAttempts) {
+        console.log('[useUserType] Max attempts reached, stopping poll');
+        clearInterval(interval);
+      }
+    }, 200);
+
+    return () => clearInterval(interval);
+  }, [fetchUserInfo, userInfo]);
 
   return {
     userType: userInfo?.user_type || null,
