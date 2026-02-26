@@ -181,6 +181,10 @@ async def get_current_user_info(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to get user info: {str(e)}")
 
+    print(f"[AUTH /me] user_id={user_id}, user_type={info.user_type.value}, "
+          f"communities_owned={len(info.communities_owned)}, "
+          f"communities_member={len(info.communities_member)}")
+
     return UserTypeInfo(
         user_id=info.user_id,
         telegram_id=info.telegram_id,
