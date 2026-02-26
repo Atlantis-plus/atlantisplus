@@ -109,6 +109,8 @@ function App() {
               setSelectedCommunityId(id);
               setCurrentPage('community-detail');
             }}
+            communities={userInfo?.communities_owned || []}
+            loading={userTypeLoading}
           />
         );
       case 'community-detail':
@@ -123,6 +125,8 @@ function App() {
               setSelectedCommunityId(id);
               setCurrentPage('community-detail');
             }}
+            communities={userInfo?.communities_owned || []}
+            loading={userTypeLoading}
           />
         );
       case 'people':

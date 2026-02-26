@@ -1,33 +1,13 @@
-import { useState, useEffect } from 'react';
-import { api } from '../lib/api';
 import type { Community } from '../lib/api';
 import { SpinnerIcon, PeopleIcon } from '../components/icons';
 
 interface CommunitiesPageProps {
   onSelectCommunity: (communityId: string) => void;
+  communities?: Community[];
+  loading?: boolean;
 }
 
-export function CommunitiesPage({ onSelectCommunity }: CommunitiesPageProps) {
-  const [communities, setCommunities] = useState<Community[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    loadCommunities();
-  }, []);
-
-  const loadCommunities = async () => {
-    try {
-      setLoading(true);
-      setError(null);
-      const data = await api.getCommunities();
-      setCommunities(data);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load communities');
-    } finally {
-      setLoading(false);
-    }
-  };
+export function CommunitiesPage({ onSelectCommunity, communities = [], loading = false }: CommunitiesPageProps) {
 
   const copyInviteLink = (inviteCode: string) => {
     const link = `https://t.me/atlantisplus_bot?start=join_${inviteCode}`;
@@ -40,22 +20,6 @@ export function CommunitiesPage({ onSelectCommunity }: CommunitiesPageProps) {
       <div className="page-container">
         <div className="flex items-center justify-center py-12">
           <SpinnerIcon size={32} className="text-[var(--accent-primary)]" />
-        </div>
-      </div>
-    );
-  }
-
-  if (error) {
-    return (
-      <div className="page-container">
-        <div className="text-center py-12">
-          <p className="text-[var(--text-error)] mb-4">{error}</p>
-          <button
-            onClick={loadCommunities}
-            className="px-4 py-2 bg-[var(--accent-primary)] text-white rounded-lg"
-          >
-            Retry
-          </button>
         </div>
       </div>
     );

@@ -54,6 +54,7 @@ from .community_handlers import (
     handle_new_community_command, handle_community_name_input,
     is_in_join_conversation, get_pending_join, PENDING_COMMUNITY_CREATION
 )
+from app.services.user_type import UserType, get_user_type_by_telegram_id
 
 # Direct imports of business logic
 from app.services.extraction import extract_from_text_simple, process_extraction_result
@@ -195,17 +196,23 @@ async def handle_text_message(update: Update, context: ContextTypes.DEFAULT_TYPE
     Handle incoming text message.
 
     ARCHITECTURE: Direct function calls - NO HTTP!
-    1. Check for active community conversation
-    2. Authenticate user
-    3. Classify message via dispatcher
-    4. Call business logic directly (extraction or chat)
-    5. Return response
+    1. Check for pasted deep links (should be clicked, not pasted)
+    2. Check for active community conversation
+    3. Authenticate user
+    4. Classify message via dispatcher
+    5. Call business logic directly (extraction or chat)
+    6. Return response
     """
     user = update.effective_user
     message_text = update.message.text
     chat_id = update.effective_chat.id
 
     logger.info(f"Received message from user_id={user.id}, username={user.username}, text_len={len(message_text)}")
+
+    # Check for pasted deep links (user should click them, not paste as text)
+    if message_text.startswith('https://t.me/') and 'start=' in message_text:
+        await send_message(chat_id, "Please click the link instead of pasting it as text.")
+        return
 
     # Check for active community conversations first
     if is_in_join_conversation(user.id):
@@ -222,6 +229,18 @@ async def handle_text_message(update: Update, context: ContextTypes.DEFAULT_TYPE
             handled = await handle_join_conversation(update, context, message_text)
             if handled:
                 return
+
+    # Check user type: community members can only use profile commands
+    user_type = get_user_type_by_telegram_id(user.id)
+    logger.info(f"User type for telegram_id={user.id}: {user_type}")
+
+    if user_type == UserType.COMMUNITY_MEMBER:
+        # Community members cannot use search/query - only profile management
+        await send_message(
+            chat_id,
+            "You can only manage your profile. Use /profile, /edit, or /delete commands."
+        )
+        return
 
     # 1. Authenticate: telegram_id → Supabase user
     try:
@@ -456,6 +475,18 @@ async def handle_voice_message(update: Update, context: ContextTypes.DEFAULT_TYP
             handled = await handle_join_voice(update, context)
             if handled:
                 return
+
+    # Check user type: community members cannot use voice for search/notes
+    user_type = get_user_type_by_telegram_id(user.id)
+    logger.info(f"User type for telegram_id={user.id}: {user_type}")
+
+    if user_type == UserType.COMMUNITY_MEMBER:
+        # Community members cannot use search/query - only profile management
+        await send_message(
+            chat_id,
+            "You can only manage your profile. Use /profile, /edit, or /delete commands."
+        )
+        return
 
     # 1. Authenticate
     try:

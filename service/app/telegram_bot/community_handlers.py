@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """
 Community-specific Telegram bot handlers.
 
@@ -264,6 +266,17 @@ async def handle_join_conversation(
             return True
 
         # Store extraction for confirmation (persist to DB)
+        # In edit mode, merge with previous extraction to preserve unchanged fields
+        if conversation.get("is_edit"):
+            previous_extraction = conversation.get("extraction", {})
+            # Merge: new values override, but empty lists/None don't replace existing
+            merged_extraction = {**previous_extraction}
+            for key, value in extraction.items():
+                # Only override if new value is meaningful
+                if value and (not isinstance(value, list) or len(value) > 0):
+                    merged_extraction[key] = value
+            extraction = merged_extraction
+
         update_pending_join(
             user.id,
             state="awaiting_confirmation",
@@ -481,15 +494,19 @@ async def handle_join_callback(
         update_pending_join(user.id, state="awaiting_intro")
         await send_message(
             chat_id,
-            "📝 Please send your corrected introduction.\n"
-            "Tell us about yourself again:"
+            "✏️ Edit your profile\n\n"
+            "Send a correction (you only need to mention what you want to change):"
         )
 
     return True
 
 
 async def create_community_profile(user, chat_id: int, conversation: dict) -> None:
-    """Create person + assertions from confirmed extraction."""
+    """Create or update person + assertions from confirmed extraction.
+
+    If is_edit=True and existing_person_id is set, updates existing profile.
+    Otherwise creates a new profile (with duplicate check).
+    """
     supabase = get_supabase_admin()
 
     extraction = conversation["extraction"]
@@ -497,12 +514,18 @@ async def create_community_profile(user, chat_id: int, conversation: dict) -> No
     community_id = conversation["community_id"]
     community_name = conversation["community_name"]
     owner_id = conversation["owner_id"]
+    is_edit = conversation.get("is_edit", False)
+    existing_person_id = conversation.get("existing_person_id")
 
     name = extraction.get("name", user.first_name)
 
-    logger.info(f"Creating community profile for telegram_id={user.id}, name={name}")
-
-    await send_message(chat_id, "✨ Creating your profile...")
+    # Determine if we're updating or creating
+    if is_edit and existing_person_id:
+        logger.info(f"Updating community profile for telegram_id={user.id}, person_id={existing_person_id}, name={name}")
+        await send_message(chat_id, "Updating your profile...")
+    else:
+        logger.info(f"Creating community profile for telegram_id={user.id}, name={name}")
+        await send_message(chat_id, "Creating your profile...")
 
     try:
         # 1. Create raw_evidence
@@ -516,35 +539,84 @@ async def create_community_profile(user, chat_id: int, conversation: dict) -> No
 
         evidence_id = evidence_result.data[0]["evidence_id"]
 
-        # 2. Create person
-        person_result = supabase.table("person").insert({
-            "owner_id": owner_id,
-            "display_name": name,
-            "telegram_id": user.id,
-            "community_id": community_id,
-            "status": "active"
-        }).execute()
+        # 2. Create or update person
+        if is_edit and existing_person_id:
+            # UPDATE existing person
+            supabase.table("person").update({
+                "display_name": name,
+                "updated_at": "now()"
+            }).eq("person_id", existing_person_id).execute()
 
-        person_id = person_result.data[0]["person_id"]
+            person_id = existing_person_id
+            logger.info(f"Updated existing person_id={person_id}")
+        else:
+            # Check for existing profile (prevent duplicates at application level)
+            existing = supabase.table("person").select(
+                "person_id"
+            ).eq("telegram_id", user.id).eq("community_id", community_id).eq(
+                "status", "active"
+            ).execute()
 
-        # 3. Create identity
-        supabase.table("identity").insert({
-            "person_id": person_id,
-            "namespace": "freeform_name",
-            "value": name
-        }).execute()
+            if existing.data:
+                # Profile already exists — update instead of create
+                person_id = existing.data[0]["person_id"]
+                supabase.table("person").update({
+                    "display_name": name,
+                    "updated_at": "now()"
+                }).eq("person_id", person_id).execute()
+                logger.info(f"Found existing profile, updated person_id={person_id}")
+            else:
+                # CREATE new person
+                person_result = supabase.table("person").insert({
+                    "owner_id": owner_id,
+                    "display_name": name,
+                    "telegram_id": user.id,
+                    "community_id": community_id,
+                    "status": "active"
+                }).execute()
+
+                person_id = person_result.data[0]["person_id"]
+                logger.info(f"Created new person_id={person_id}")
+
+        # 3. Update identity (for all cases, not just new profiles)
+        # Check if freeform_name identity already exists
+        existing_identity = supabase.table("identity").select(
+            "identity_id"
+        ).eq("person_id", person_id).eq("namespace", "freeform_name").execute()
+
+        if existing_identity.data:
+            # Update existing identity
+            supabase.table("identity").update({
+                "value": name
+            }).eq("identity_id", existing_identity.data[0]["identity_id"]).execute()
+        else:
+            supabase.table("identity").insert({
+                "person_id": person_id,
+                "namespace": "freeform_name",
+                "value": name
+            }).execute()
 
         if user.username:
             try:
-                supabase.table("identity").insert({
-                    "person_id": person_id,
-                    "namespace": "telegram_username",
-                    "value": user.username
-                }).execute()
+                # Check if telegram_username identity already exists
+                existing_tg = supabase.table("identity").select(
+                    "identity_id"
+                ).eq("person_id", person_id).eq("namespace", "telegram_username").execute()
+
+                if existing_tg.data:
+                    supabase.table("identity").update({
+                        "value": user.username
+                    }).eq("identity_id", existing_tg.data[0]["identity_id"]).execute()
+                else:
+                    supabase.table("identity").insert({
+                        "person_id": person_id,
+                        "namespace": "telegram_username",
+                        "value": user.username
+                    }).execute()
             except Exception:
                 pass
 
-        # 4. Create assertions from extraction
+        # 4. Create assertions from extraction (always add new assertions)
         assertions = []
 
         for field, predicate in SELF_INTRO_PREDICATE_MAP.items():
@@ -585,7 +657,8 @@ async def create_community_profile(user, chat_id: int, conversation: dict) -> No
                 assertion["embedding"] = embeddings[i] if i < len(embeddings) else None
                 supabase.table("assertion").insert(assertion).execute()
 
-        logger.info(f"Created profile: person_id={person_id}, assertions={len(assertions)}")
+        action_word = "Updated" if is_edit else "Created"
+        logger.info(f"{action_word} profile: person_id={person_id}, assertions={len(assertions)}")
 
         # Check profile completeness for follow-up (Phase 2)
         has_role = bool(extraction.get("current_role"))
@@ -600,14 +673,25 @@ async def create_community_profile(user, chat_id: int, conversation: dict) -> No
         if not has_seeks:
             missing_fields.append("what you're looking for")
 
-        if missing_fields:
+        if is_edit:
+            # Edit mode — simpler success message
+            await send_message(
+                chat_id,
+                f"Done! Your profile has been updated.\n\n"
+                f"Name: <b>{name}</b>\n"
+                f"New facts added: {len(assertions)}\n\n"
+                "/profile - view your profile\n"
+                "/edit - make more changes",
+                parse_mode="HTML"
+            )
+        elif missing_fields:
             # Profile incomplete — offer follow-up
             await send_message(
                 chat_id,
-                f"🎉 <b>Welcome to {community_name}!</b>\n\n"
+                f"Welcome to <b>{community_name}</b>!\n\n"
                 f"Your profile has been created:\n"
-                f"👤 <b>{name}</b>\n\n"
-                f"💡 <b>Want to add more?</b>\n"
+                f"Name: <b>{name}</b>\n\n"
+                f"<b>Want to add more?</b>\n"
                 f"Your profile would be stronger with: {', '.join(missing_fields)}.\n\n"
                 "Send another voice or text message to add more details,\n"
                 "or use /profile to see your current profile.",
@@ -617,21 +701,22 @@ async def create_community_profile(user, chat_id: int, conversation: dict) -> No
             # Profile complete
             await send_message(
                 chat_id,
-                f"🎉 <b>Welcome to {community_name}!</b>\n\n"
+                f"Welcome to <b>{community_name}</b>!\n\n"
                 f"Your profile has been created:\n"
-                f"👤 <b>{name}</b>\n\n"
+                f"Name: <b>{name}</b>\n\n"
                 "Commands:\n"
-                "/profile — view your profile\n"
-                "/edit — update your profile\n"
-                "/delete — remove your profile",
+                "/profile - view your profile\n"
+                "/edit - update your profile\n"
+                "/delete - remove your profile",
                 parse_mode="HTML"
             )
 
     except Exception as e:
-        logger.error(f"Error creating profile: {e}", exc_info=True)
+        logger.error(f"Error creating/updating profile: {e}", exc_info=True)
+        error_action = "updating" if is_edit else "creating"
         await send_message(
             chat_id,
-            "❌ Error creating profile. Please try again with /start."
+            f"Error {error_action} profile. Please try again."
         )
 
 

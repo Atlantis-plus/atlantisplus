@@ -177,8 +177,15 @@ async def get_user_type_info(user_id: str, telegram_id: Optional[int] = None) ->
     if user_type in [UserType.ATLANTIS_PLUS, UserType.COMMUNITY_ADMIN]:
         try:
             result = supabase.table("community").select(
-                "community_id, name, invite_code, is_active, created_at"
+                "community_id, name, description, invite_code, telegram_channel_id, is_active, created_at, updated_at"
             ).eq("owner_id", user_id).eq("is_active", True).execute()
+
+            # Add member_count for each community
+            for community in result.data or []:
+                count_result = supabase.table("person").select(
+                    "person_id", count="exact"
+                ).eq("community_id", community["community_id"]).eq("status", "active").execute()
+                community["member_count"] = count_result.count or 0
 
             communities_owned = result.data or []
         except Exception:
