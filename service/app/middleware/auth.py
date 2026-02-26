@@ -20,19 +20,24 @@ async def verify_supabase_token(
     settings = get_settings()
     token = credentials.credentials
 
+    alg = "unknown"
     try:
-        # Only allow HS256 - RS256 would require JWKS verification
-        # Rejecting RS256 prevents signature bypass attacks
+        # Log the algorithm being used
+        unverified = jwt.get_unverified_header(token)
+        alg = unverified.get("alg", "unknown")
+        print(f"[AUTH] Token algorithm: {alg}")
+
+        # Accept HS256 (standard Supabase) - verify with JWT secret
         payload = jwt.decode(
             token,
             settings.supabase_jwt_secret,
-            algorithms=["HS256"],  # Explicitly only HS256
-            options={"verify_aud": False}  # Supabase may not always set audience
+            algorithms=["HS256"],
+            options={"verify_aud": False}
         )
+        print(f"[AUTH] Token verified successfully for user: {payload.get('sub', 'unknown')}")
         return payload
     except JWTError as e:
-        # Don't expose internal error details
-        print(f"[AUTH] JWT verification failed: {e}")
+        print(f"[AUTH] JWT verification failed: {e}, algorithm was: {alg}")
         raise HTTPException(
             status_code=401,
             detail="Invalid or expired authentication token"
