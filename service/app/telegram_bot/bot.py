@@ -21,6 +21,12 @@ from .handlers import (
     handle_callback_query,
     handle_error,
 )
+from .community_handlers import (
+    handle_profile_command,
+    handle_edit_command,
+    handle_delete_command,
+    handle_new_community_command,
+)
 
 
 # Global application instance (initialized once)
@@ -45,6 +51,12 @@ def get_bot_application() -> Application:
         _application.add_handler(CommandHandler("start", handle_start_command))
         _application.add_handler(CommandHandler("help", handle_help_command))
         _application.add_handler(CommandHandler("reset", handle_reset_command))
+
+        # Community member commands
+        _application.add_handler(CommandHandler("profile", handle_profile_command))
+        _application.add_handler(CommandHandler("edit", handle_edit_command))
+        _application.add_handler(CommandHandler("delete", handle_delete_command))
+        _application.add_handler(CommandHandler("newcommunity", handle_new_community_command))
 
         # Text messages
         _application.add_handler(

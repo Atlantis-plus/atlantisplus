@@ -866,3 +866,31 @@ export const UploadIcon: React.FC<IconProps> = ({
   </svg>
 );
 
+/** Community/group - for communities section */
+export const CommunityIcon: React.FC<IconProps> = ({
+  className,
+  size = defaultProps.size,
+  strokeWidth = defaultProps.strokeWidth,
+  style
+}) => (
+  <svg
+    width={size}
+    height={size}
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth={strokeWidth}
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    className={className}
+    style={style}
+  >
+    {/* House/home shape for community */}
+    <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V9z" />
+    {/* People inside */}
+    <circle cx="9" cy="13" r="2" />
+    <circle cx="15" cy="13" r="2" />
+    <path d="M9 18v-1a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v1" />
+  </svg>
+);
+

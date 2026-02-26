@@ -22,6 +22,17 @@ Tier 2 (Deep, ~15 sec): Claude agent multi-shot search
 
 The PENDING_DIG_DEEPER_QUERIES dict stores original queries
 temporarily (keyed by hash) for Tier 2 callbacks.
+
+COMMUNITY INTAKE MODE:
+======================
+Three user types with different UX:
+- Atlantis+ members: full access
+- Community admins: see own community members
+- Community members: only self-profile
+
+Deep link handling:
+- join_XXX: community onboarding flow
+- person_XXX: open person profile
 """
 
 import asyncio
@@ -36,6 +47,13 @@ from .telegram_api import (
     send_message_with_dig_deeper, edit_message_text
 )
 from .logging_config import bot_logger as logger
+from .community_handlers import (
+    handle_join_deep_link, handle_join_conversation, handle_join_voice,
+    handle_join_callback, handle_delete_callback,
+    handle_profile_command, handle_edit_command, handle_delete_command,
+    handle_new_community_command, handle_community_name_input,
+    is_in_join_conversation, get_pending_join, PENDING_COMMUNITY_CREATION
+)
 
 # Direct imports of business logic
 from app.services.extraction import extract_from_text_simple, process_extraction_result
@@ -70,19 +88,49 @@ def log_query(user_id: str, query_text: str, tier: int = 1, results_count: int =
 
 
 async def handle_start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle /start command."""
-    user = update.effective_user
+    """
+    Handle /start command with deep link support.
 
+    Deep links handled:
+    - join_XXX: community onboarding
+    - person_XXX: open person profile (redirect to Mini App)
+    """
+    user = update.effective_user
+    args = context.args  # ['join_ABC123'] or []
+
+    # Handle deep links
+    if args:
+        deep_link = args[0]
+
+        # Community join flow
+        if deep_link.startswith('join_'):
+            invite_code = deep_link[5:]  # Remove 'join_' prefix
+            await handle_join_deep_link(update, context, invite_code)
+            return
+
+        # Person profile link (redirect to Mini App)
+        if deep_link.startswith('person_'):
+            person_id = deep_link[7:]  # Remove 'person_' prefix
+            settings = get_settings()
+            mini_app_link = f"{settings.mini_app_url}?startapp=person_{person_id}"
+            await update.message.reply_text(
+                f"Opening profile...\n\n"
+                f"<a href=\"{mini_app_link}\">Open in Mini App</a>",
+                parse_mode="HTML"
+            )
+            return
+
+    # Default welcome message
     welcome_text = f"""👋 Hi, {user.first_name}!
 
 I'm Atlantis Plus, your personal assistant for managing your professional network.
 
-**What I can do:**
+<b>What I can do:</b>
 • Remember information about people from your notes
 • Answer questions about your network
 • Find the right people for specific tasks
 
-**How to use:**
+<b>How to use:</b>
 Just text me or send a voice message:
 • "Vasya works at Google, met him in Singapore"
 • "Who can help with fundraising?"
@@ -92,39 +140,43 @@ I'll automatically figure out what to save and what to answer.
 
 Use the menu button below to access your contact catalog 👇"""
 
-    await update.message.reply_text(welcome_text)
+    await update.message.reply_text(welcome_text, parse_mode="HTML")
 
 
 async def handle_help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle /help command."""
-    help_text = """📖 **How to use Atlantis Plus**
+    help_text = """📖 <b>How to use Atlantis Plus</b>
 
-**Adding information:**
+<b>Adding information:</b>
 Just write or voice note facts about people:
 • "Alex is a partner at Sequoia"
 • "Met Maria at a conference"
 • "Pete is an AI expert, can help with ML pipeline"
 
-**Finding people:**
+<b>Finding people:</b>
 Ask questions in natural language:
 • "Who works in pharma?"
 • "Find someone who knows blockchain"
 • "Who can intro me to YC?"
 
-**Dialog:**
+<b>Dialog:</b>
 I remember conversation context, so you can clarify:
 • "Where did he work before?"
 • "When did we last talk?"
 
-**Commands:**
+<b>Commands:</b>
 /start — bot info
 /help — this help
 /reset — clear dialog context
+/profile — view your community profile
+/edit — edit your profile
+/delete — delete your profile
+/newcommunity — create a community (members only)
 
-**Catalog:**
+<b>Catalog:</b>
 Open Mini App via menu button to browse all contacts 👇"""
 
-    await update.message.reply_text(help_text, parse_mode="Markdown")
+    await update.message.reply_text(help_text, parse_mode="HTML")
 
 
 async def handle_reset_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -143,16 +195,33 @@ async def handle_text_message(update: Update, context: ContextTypes.DEFAULT_TYPE
     Handle incoming text message.
 
     ARCHITECTURE: Direct function calls - NO HTTP!
-    1. Authenticate user
-    2. Classify message via dispatcher
-    3. Call business logic directly (extraction or chat)
-    4. Return response
+    1. Check for active community conversation
+    2. Authenticate user
+    3. Classify message via dispatcher
+    4. Call business logic directly (extraction or chat)
+    5. Return response
     """
     user = update.effective_user
     message_text = update.message.text
     chat_id = update.effective_chat.id
 
     logger.info(f"Received message from user_id={user.id}, username={user.username}, text_len={len(message_text)}")
+
+    # Check for active community conversations first
+    if is_in_join_conversation(user.id):
+        # Check community creation flow (in-memory)
+        community_creation = PENDING_COMMUNITY_CREATION.get(user.id, {})
+        if community_creation.get("state") == "awaiting_community_name":
+            handled = await handle_community_name_input(update, context, message_text)
+            if handled:
+                return
+
+        # Check join/edit flow (persistent in DB)
+        join_conversation = get_pending_join(user.id)
+        if join_conversation and join_conversation.get("state") == "awaiting_intro":
+            handled = await handle_join_conversation(update, context, message_text)
+            if handled:
+                return
 
     # 1. Authenticate: telegram_id → Supabase user
     try:
@@ -380,6 +449,14 @@ async def handle_voice_message(update: Update, context: ContextTypes.DEFAULT_TYP
 
     logger.info(f"Received voice message from user_id={user.id}, duration={voice.duration}s")
 
+    # Check for active join conversation first (persistent in DB)
+    if is_in_join_conversation(user.id):
+        join_conversation = get_pending_join(user.id)
+        if join_conversation and join_conversation.get("state") == "awaiting_intro":
+            handled = await handle_join_voice(update, context)
+            if handled:
+                return
+
     # 1. Authenticate
     try:
         supabase_user = await get_or_create_user(
@@ -513,6 +590,8 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
     Actions:
     - dig:{query_hash} — Dig deeper with Claude agent (Tier 2 search)
     - merge, reject — Duplicate resolution (proactive_service)
+    - join_confirm, join_edit — Community join flow
+    - delete_profile, delete_cancel — Profile deletion
     """
     print("[CALLBACK_HANDLER] Entered handle_callback_query")
 
@@ -524,6 +603,18 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
 
     print(f"[CALLBACK_HANDLER] callback_data={callback_data}, user_id={user.id}")
     logger.info(f"Callback from user_id={user.id}: {callback_data}")
+
+    # Handle community join callbacks
+    if callback_data.startswith("join_"):
+        handled = await handle_join_callback(update, context, callback_data)
+        if handled:
+            return
+
+    # Handle profile deletion callbacks
+    if callback_data.startswith("delete_"):
+        handled = await handle_delete_callback(update, context, callback_data)
+        if handled:
+            return
 
     # Authenticate user
     try:

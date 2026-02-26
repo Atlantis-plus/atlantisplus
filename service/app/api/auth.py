@@ -5,11 +5,12 @@ from urllib.parse import parse_qsl
 
 from typing import Optional
 
-from fastapi import APIRouter, Header, HTTPException
+from fastapi import APIRouter, Header, HTTPException, Depends
 from pydantic import BaseModel
 
 from app.config import get_settings
 from app.supabase_client import get_supabase_admin
+from app.middleware.auth import verify_supabase_token, get_user_id
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -34,6 +35,15 @@ class TelegramAuthResponse(BaseModel):
     user_id: str
     telegram_id: int
     display_name: str
+
+
+class UserTypeInfo(BaseModel):
+    """Response for /auth/me endpoint."""
+    user_id: str
+    telegram_id: Optional[int]
+    user_type: str
+    communities_owned: list[dict]
+    communities_member: list[dict]
 
 
 def validate_telegram_init_data(init_data: str, bot_token: str) -> dict:
@@ -150,6 +160,33 @@ async def auth_telegram(request: TelegramAuthRequest):
         user_id=session.user.id,
         telegram_id=telegram_id,
         display_name=display_name
+    )
+
+
+@router.get("/me", response_model=UserTypeInfo)
+async def get_current_user_info(
+    token_payload: dict = Depends(verify_supabase_token)
+):
+    """
+    Get current user info including user type and communities.
+
+    Used by frontend to determine which UI to show.
+    """
+    from app.services.user_type import get_user_type_info
+
+    user_id = get_user_id(token_payload)
+
+    try:
+        info = await get_user_type_info(user_id)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get user info: {str(e)}")
+
+    return UserTypeInfo(
+        user_id=info.user_id,
+        telegram_id=info.telegram_id,
+        user_type=info.user_type.value,
+        communities_owned=info.communities_owned,
+        communities_member=info.communities_member
     )
 
 

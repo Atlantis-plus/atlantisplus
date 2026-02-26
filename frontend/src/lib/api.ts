@@ -329,6 +329,72 @@ class ApiClient {
   async getEnrichmentStatus(personId: string): Promise<EnrichmentStatusResponse> {
     return this.request(`/enrich/status/${personId}`);
   }
+
+  // ============================================
+  // USER INFO API
+  // ============================================
+
+  async getUserInfo(): Promise<UserInfo> {
+    return this.request('/auth/me');
+  }
+
+  // ============================================
+  // COMMUNITY API
+  // ============================================
+
+  async getCommunities(): Promise<Community[]> {
+    return this.request('/communities');
+  }
+
+  async getCommunityByInvite(inviteCode: string): Promise<CommunityPublicInfo> {
+    return this.request(`/communities/by-invite/${inviteCode}`);
+  }
+
+  async createCommunity(name: string, description?: string): Promise<Community> {
+    return this.request('/communities', {
+      method: 'POST',
+      body: JSON.stringify({ name, description })
+    });
+  }
+
+  async getCommunity(communityId: string): Promise<Community> {
+    return this.request(`/communities/${communityId}`);
+  }
+
+  async getCommunityMembers(communityId: string): Promise<CommunityMember[]> {
+    return this.request(`/communities/${communityId}/members`);
+  }
+
+  async regenerateInviteCode(communityId: string): Promise<{ invite_code: string }> {
+    return this.request(`/communities/${communityId}/regenerate-invite`, {
+      method: 'POST'
+    });
+  }
+
+  // ============================================
+  // SELF-PROFILE API (for community members)
+  // ============================================
+
+  async getSelfProfile(communityId: string): Promise<SelfProfile | null> {
+    return this.request(`/profile/me?community_id=${communityId}`);
+  }
+
+  async createOrUpdateProfile(communityId: string, text: string): Promise<ProfileResult> {
+    return this.request('/profile/me', {
+      method: 'POST',
+      body: JSON.stringify({ community_id: communityId, text })
+    });
+  }
+
+  async deleteSelfProfile(communityId: string): Promise<{ deleted: boolean }> {
+    return this.request(`/profile/me?community_id=${communityId}`, {
+      method: 'DELETE'
+    });
+  }
+
+  async getMyCommunities(): Promise<CommunityMembership[]> {
+    return this.request('/profile/communities');
+  }
 }
 
 // ============================================
@@ -366,6 +432,81 @@ export interface EnrichmentStatusResponse {
     error?: string;
     completed_at?: string;
   } | null;
+}
+
+// ============================================
+// USER INFO TYPES
+// ============================================
+
+export interface UserInfo {
+  user_id: string;
+  telegram_id: number | null;
+  user_type: 'atlantis_plus' | 'community_admin' | 'community_member' | 'new_user';
+  communities_owned: Community[];
+  communities_member: CommunityMembership[];
+}
+
+// ============================================
+// COMMUNITY TYPES
+// ============================================
+
+export interface Community {
+  community_id: string;
+  name: string;
+  description: string | null;
+  invite_code: string;
+  telegram_channel_id: number | null;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+  member_count: number;
+}
+
+export interface CommunityPublicInfo {
+  community_id: string;
+  name: string;
+  description: string | null;
+}
+
+export interface CommunityMembership {
+  community_id: string;
+  name: string;
+  person_id: string;
+  joined_at: string;
+}
+
+export interface CommunityMember {
+  person_id: string;
+  display_name: string;
+  telegram_id: number | null;
+  created_at: string;
+  assertions: Array<{
+    predicate: string;
+    value: string;
+  }>;
+}
+
+// ============================================
+// SELF-PROFILE TYPES
+// ============================================
+
+export interface SelfProfile {
+  person_id: string;
+  display_name: string;
+  community_id: string;
+  community_name: string;
+  assertions: Array<{
+    predicate: string;
+    value: string;
+  }>;
+  created_at: string;
+}
+
+export interface ProfileResult {
+  person_id: string;
+  display_name: string;
+  assertions_created: number;
+  preview: Record<string, unknown>;
 }
 
 export const api = new ApiClient();

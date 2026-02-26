@@ -1,20 +1,30 @@
 import { useEffect, useState } from 'react';
 import { initTelegram, isTelegramMiniApp, parsePersonDeeplink } from './lib/telegram';
 import { useAuth } from './hooks/useAuth';
+import { useUserType } from './hooks/useUserType';
 import { HomePage } from './pages/HomePage';
 import { NotesPage } from './pages/NotesPage';
 import { PeoplePage } from './pages/PeoplePage';
 import { ChatPage } from './pages/ChatPage';
-import { PeopleIcon, NotesIcon, ChatIcon, ImportIcon } from './components/icons';
+import { SelfProfilePage } from './pages/SelfProfilePage';
+import { CommunitiesPage } from './pages/CommunitiesPage';
+import { CommunityDetailPage } from './pages/CommunityDetailPage';
+import { PeopleIcon, NotesIcon, ChatIcon, ImportIcon, SpinnerIcon, CommunityIcon } from './components/icons';
 import './App.css';
 
-type Page = 'people' | 'notes' | 'chat' | 'import';
+type Page = 'people' | 'notes' | 'chat' | 'import' | 'self-profile' | 'communities' | 'community-detail';
 
 function App() {
   const [currentPage, setCurrentPage] = useState<Page>('people');
   // Person ID from deeplink - when set, PeoplePage will open this person's profile directly
   const [initialPersonId, setInitialPersonId] = useState<string | null>(null);
-  const { isAuthenticated, loading } = useAuth();
+  // Community ID for self-profile page (community members)
+  const [selfProfileCommunityId, setSelfProfileCommunityId] = useState<string | null>(null);
+  // Selected community for detail view
+  const [selectedCommunityId, setSelectedCommunityId] = useState<string | null>(null);
+
+  const { isAuthenticated, loading: authLoading } = useAuth();
+  const { userType, userInfo, loading: userTypeLoading } = useUserType();
 
   useEffect(() => {
     if (isTelegramMiniApp()) {
@@ -25,14 +35,38 @@ function App() {
       if (personId) {
         setInitialPersonId(personId);
         setCurrentPage('people');
+        return;
       }
+
+      // Check for community join deeplink - but this should be handled by bot, not Mini App
+      // Mini App just shows the appropriate UI based on user type
     }
   }, []);
 
+  // Set appropriate page based on user type
+  useEffect(() => {
+    if (!userTypeLoading && userType) {
+      if (userType === 'community_member') {
+        // Community members see only their profile
+        setCurrentPage('self-profile');
+
+        // Get first community they're a member of
+        if (userInfo?.communities_member && userInfo.communities_member.length > 0) {
+          setSelfProfileCommunityId(userInfo.communities_member[0].community_id);
+        }
+      }
+    }
+  }, [userType, userInfo, userTypeLoading]);
+
+  const loading = authLoading || (isAuthenticated && userTypeLoading);
+
   if (loading) {
     return (
-      <div className="page">
-        <div className="loading">Loading...</div>
+      <div className="min-h-screen bg-[var(--bg-primary)] flex items-center justify-center">
+        <div className="text-center">
+          <SpinnerIcon size={32} className="mx-auto mb-4 text-[var(--accent-primary)]" />
+          <p className="text-[var(--text-muted)]">Loading...</p>
+        </div>
       </div>
     );
   }
@@ -42,6 +76,17 @@ function App() {
     setInitialPersonId(null);
   };
 
+  // For community members, show only SelfProfilePage
+  if (userType === 'community_member') {
+    return (
+      <div className="app">
+        <SelfProfilePage
+          communityId={selfProfileCommunityId || undefined}
+        />
+      </div>
+    );
+  }
+
   const renderPage = () => {
     switch (currentPage) {
       case 'notes':
@@ -50,6 +95,36 @@ function App() {
         return <ChatPage />;
       case 'import':
         return <HomePage onNavigate={setCurrentPage} />;
+      case 'self-profile':
+        return (
+          <SelfProfilePage
+            communityId={selfProfileCommunityId || undefined}
+            onBack={() => setCurrentPage('people')}
+          />
+        );
+      case 'communities':
+        return (
+          <CommunitiesPage
+            onSelectCommunity={(id) => {
+              setSelectedCommunityId(id);
+              setCurrentPage('community-detail');
+            }}
+          />
+        );
+      case 'community-detail':
+        return selectedCommunityId ? (
+          <CommunityDetailPage
+            communityId={selectedCommunityId}
+            onBack={() => setCurrentPage('communities')}
+          />
+        ) : (
+          <CommunitiesPage
+            onSelectCommunity={(id) => {
+              setSelectedCommunityId(id);
+              setCurrentPage('community-detail');
+            }}
+          />
+        );
       case 'people':
       default:
         return (
@@ -96,6 +171,16 @@ function App() {
             <ImportIcon size={22} />
             <span className="nav-label">Import</span>
           </button>
+          {/* Communities tab - only for admins/atlantis+ */}
+          {(userType === 'atlantis_plus' || userType === 'community_admin') && (
+            <button
+              className={`nav-btn ${currentPage === 'communities' || currentPage === 'community-detail' ? 'active' : ''}`}
+              onClick={() => setCurrentPage('communities')}
+            >
+              <CommunityIcon size={22} />
+              <span className="nav-label">Groups</span>
+            </button>
+          )}
         </nav>
       )}
     </div>

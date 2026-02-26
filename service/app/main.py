@@ -20,6 +20,8 @@ from app.api.enrichment import router as enrichment_router
 from app.api.import_linkedin import router as import_router
 from app.api.import_calendar import router as import_calendar_router
 from app.api.people import router as people_router
+from app.api.community import router as community_router
+from app.api.profile import router as profile_router
 from app.telegram_bot.bot import handle_telegram_update, initialize_bot, shutdown_bot
 
 app = FastAPI(
@@ -169,6 +171,8 @@ app.include_router(enrichment_router)
 app.include_router(import_router)
 app.include_router(import_calendar_router)
 app.include_router(people_router)
+app.include_router(community_router)
+app.include_router(profile_router)
 
 
 if __name__ == "__main__":
