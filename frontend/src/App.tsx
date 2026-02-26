@@ -144,7 +144,7 @@ function App() {
     <div className="app">
       {renderPage()}
 
-      {/* Bottom navigation */}
+      {/* Bottom navigation - community members never reach here due to early return above */}
       {isAuthenticated && (
         <nav className="bottom-nav">
           <button

@@ -49,7 +49,7 @@ from .telegram_api import (
 from .logging_config import bot_logger as logger
 from .community_handlers import (
     handle_join_deep_link, handle_join_conversation, handle_join_voice,
-    handle_join_callback, handle_delete_callback,
+    handle_join_callback, handle_delete_callback, handle_show_profile_callback,
     handle_profile_command, handle_edit_command, handle_delete_command,
     handle_new_community_command, handle_community_name_input,
     is_in_join_conversation, get_pending_join, PENDING_COMMUNITY_CREATION
@@ -644,6 +644,12 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
     # Handle profile deletion callbacks
     if callback_data.startswith("delete_"):
         handled = await handle_delete_callback(update, context, callback_data)
+        if handled:
+            return
+
+    # Handle profile selection callbacks (multi-community)
+    if callback_data.startswith("show_profile:"):
+        handled = await handle_show_profile_callback(update, context, callback_data)
         if handled:
             return
 

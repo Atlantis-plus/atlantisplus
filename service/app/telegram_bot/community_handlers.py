@@ -506,6 +506,8 @@ async def create_community_profile(user, chat_id: int, conversation: dict) -> No
 
     If is_edit=True and existing_person_id is set, updates existing profile.
     Otherwise creates a new profile (with duplicate check).
+
+    Also creates community_member record for RLS-based community access.
     """
     supabase = get_supabase_admin()
 
@@ -577,6 +579,44 @@ async def create_community_profile(user, chat_id: int, conversation: dict) -> No
 
                 person_id = person_result.data[0]["person_id"]
                 logger.info(f"Created new person_id={person_id}")
+
+                # Create community_member record for RLS-based access
+                # Need to find auth.users id for this telegram user
+                try:
+                    auth_user_result = supabase.table("identity").select(
+                        "person:person_id(owner_id)"
+                    ).eq("namespace", "telegram_user_id").eq("value", str(user.id)).limit(1).execute()
+
+                    if auth_user_result.data and auth_user_result.data[0].get("person"):
+                        member_user_id = auth_user_result.data[0]["person"]["owner_id"]
+                    else:
+                        # Fallback: use owner_id (community owner)
+                        # This might not be correct, but better than nothing
+                        # The user should have auth record from Telegram login
+                        from app.supabase_client import get_supabase_admin
+                        admin = get_supabase_admin()
+                        # Try to find by telegram_id in auth.users metadata
+                        # Service role can query auth.users
+                        users_result = admin.auth.admin.list_users()
+                        member_user_id = None
+                        for auth_user in users_result:
+                            metadata = auth_user.user_metadata or {}
+                            if str(metadata.get("telegram_id")) == str(user.id):
+                                member_user_id = auth_user.id
+                                break
+                        if not member_user_id:
+                            logger.warning(f"Could not find auth user for telegram_id={user.id}, skipping community_member")
+
+                    if member_user_id:
+                        supabase.table("community_member").upsert({
+                            "user_id": member_user_id,
+                            "community_id": community_id,
+                            "telegram_id": user.id
+                        }, on_conflict="user_id,community_id").execute()
+                        logger.info(f"Created community_member for user_id={member_user_id}, community_id={community_id}")
+                except Exception as e:
+                    logger.warning(f"Failed to create community_member: {e}")
+                    # Non-critical, continue with profile creation
 
         # 3. Update identity (for all cases, not just new profiles)
         # Check if freeform_name identity already exists
@@ -735,56 +775,45 @@ async def handle_profile_command(update: Update, context: ContextTypes.DEFAULT_T
 
     if not result.data:
         await update.message.reply_text(
-            "📭 You don't have any community profiles yet.\n\n"
+            "You don't have any community profiles yet.\n\n"
             "Join a community using an invite link to create one!"
         )
         return
 
-    # For simplicity, show first profile (or could list all)
-    profile = result.data[0]
-    person_id = profile["person_id"]
-    community_name = profile["community"]["name"] if profile.get("community") else "Unknown"
+    profiles = result.data
 
-    # Get assertions
-    assertions_result = supabase.table("assertion").select(
-        "predicate, object_value"
-    ).eq("subject_person_id", person_id).execute()
+    # Priority 1: If there's an active pending_join session, show that community's profile
+    pending = get_pending_join(user.id)
+    if pending:
+        pending_community_id = pending.get("community_id")
+        for p in profiles:
+            if p["community_id"] == pending_community_id:
+                profile = p
+                break
+        else:
+            # No profile in pending community yet (still in join flow)
+            profile = profiles[0]
+    elif len(profiles) > 1:
+        # Priority 2: Multiple profiles, no active session — show selection list
+        text = "You have profiles in multiple communities:\n\n"
+        buttons = []
+        for p in profiles:
+            community_name = p["community"]["name"] if p.get("community") else "Unknown"
+            text += f"- {p['display_name']} in <b>{community_name}</b>\n"
+            buttons.append([{
+                "text": f"{community_name}",
+                "callback_data": f"show_profile:{p['person_id']}"
+            }])
 
-    # Format profile
-    text = f"👤 <b>Your profile in {community_name}</b>\n\n"
-    text += f"<b>Name:</b> {profile['display_name']}\n\n"
+        text += "\nSelect a community to view:"
+        await send_message_with_buttons(chat_id, text, buttons=buttons, parse_mode="HTML")
+        return
+    else:
+        # Single profile
+        profile = profiles[0]
 
-    if assertions_result.data:
-        # Group by predicate type
-        role = []
-        offers = []
-        seeks = []
-        other = []
-
-        for a in assertions_result.data:
-            pred = a["predicate"]
-            val = a["object_value"]
-            if pred == "self_role":
-                role.append(val)
-            elif pred == "self_offer":
-                offers.append(val)
-            elif pred == "self_seek":
-                seeks.append(val)
-            elif not pred.startswith("_"):
-                other.append(f"{pred}: {val}")
-
-        if role:
-            text += f"<b>Role:</b> {', '.join(role)}\n"
-        if offers:
-            text += f"<b>Can help with:</b> {', '.join(offers)}\n"
-        if seeks:
-            text += f"<b>Looking for:</b> {', '.join(seeks)}\n"
-        if other:
-            text += f"<b>Other:</b> {', '.join(other)}\n"
-
-    text += "\n/edit — update profile\n/delete — remove profile"
-
-    await update.message.reply_text(text, parse_mode="HTML")
+    # Display the selected profile
+    await display_profile(update.message, profile, edit=False)
 
 
 async def handle_edit_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -907,6 +936,101 @@ async def handle_delete_callback(
     )
 
     return True
+
+
+async def handle_show_profile_callback(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    callback_data: str
+) -> bool:
+    """Handle show_profile:person_id callback for multi-community profile selection."""
+    query = update.callback_query
+    user = update.effective_user
+    chat_id = query.message.chat_id
+
+    if not callback_data.startswith("show_profile:"):
+        return False
+
+    person_id = callback_data.split(":")[1]
+
+    await query.answer()
+
+    supabase = get_supabase_admin()
+
+    # Get profile and verify ownership
+    result = supabase.table("person").select(
+        "person_id, display_name, telegram_id, community_id, community:community_id(name)"
+    ).eq("person_id", person_id).eq("status", "active").execute()
+
+    if not result.data:
+        await query.message.edit_text("Profile not found.")
+        return True
+
+    profile = result.data[0]
+
+    if profile["telegram_id"] != user.id:
+        await query.message.edit_text("You can only view your own profiles.")
+        return True
+
+    # Display the profile
+    await display_profile(query.message, profile, edit=True)
+    return True
+
+
+async def display_profile(message, profile: dict, edit: bool = False) -> None:
+    """Display a person's profile with assertions.
+
+    Args:
+        message: Telegram message object (for reply or edit)
+        profile: Dict with person_id, display_name, community (with name)
+        edit: If True, edit the message; if False, reply
+    """
+    supabase = get_supabase_admin()
+    person_id = profile["person_id"]
+    community_name = profile["community"]["name"] if profile.get("community") else "Unknown"
+
+    # Get assertions
+    assertions_result = supabase.table("assertion").select(
+        "predicate, object_value"
+    ).eq("subject_person_id", person_id).execute()
+
+    # Format profile
+    text = f"<b>Your profile in {community_name}</b>\n\n"
+    text += f"<b>Name:</b> {profile['display_name']}\n\n"
+
+    if assertions_result.data:
+        role = []
+        offers = []
+        seeks = []
+        other = []
+
+        for a in assertions_result.data:
+            pred = a["predicate"]
+            val = a["object_value"]
+            if pred == "self_role":
+                role.append(val)
+            elif pred == "self_offer":
+                offers.append(val)
+            elif pred == "self_seek":
+                seeks.append(val)
+            elif not pred.startswith("_"):
+                other.append(f"{pred}: {val}")
+
+        if role:
+            text += f"<b>Role:</b> {', '.join(role)}\n"
+        if offers:
+            text += f"<b>Can help with:</b> {', '.join(offers)}\n"
+        if seeks:
+            text += f"<b>Looking for:</b> {', '.join(seeks)}\n"
+        if other:
+            text += f"<b>Other:</b> {', '.join(other)}\n"
+
+    text += "\n/edit - update profile\n/delete - remove profile"
+
+    if edit:
+        await message.edit_text(text, parse_mode="HTML")
+    else:
+        await message.reply_text(text, parse_mode="HTML")
 
 
 async def handle_new_community_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
