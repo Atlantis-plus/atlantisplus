@@ -5,6 +5,18 @@
 
 ---
 
+## CRITICAL RULE: Check Known Issues First
+
+**Before debugging ANY deployment/infra/recurring error:**
+```bash
+grep -i "KEYWORD" docs/ops/known-issues.md
+```
+
+If the error looks familiar or involves Railway/Supabase/JWT — CHECK THE FILE FIRST.
+DO NOT waste time re-discovering solutions that are already documented.
+
+---
+
 ## CRITICAL RULE: Interface Language
 
 **ALL user-facing interfaces MUST be in English:**
