@@ -16,14 +16,28 @@ interface ProcessResponse {
 
 class ApiClient {
   private accessToken: string | null = null;
+  private tokenListeners: Set<() => void> = new Set();
 
   setAccessToken(token: string) {
     this.accessToken = token;
     console.log('[API] Access token set');
+    // Notify all listeners that token is now available
+    this.tokenListeners.forEach(listener => listener());
   }
 
   hasAccessToken(): boolean {
     return !!this.accessToken;
+  }
+
+  /**
+   * Subscribe to token availability. Callback is called when token is set.
+   * Returns an unsubscribe function.
+   */
+  onTokenAvailable(callback: () => void): () => void {
+    this.tokenListeners.add(callback);
+    return () => {
+      this.tokenListeners.delete(callback);
+    };
   }
 
   getApiUrl(): string {

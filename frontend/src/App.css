@@ -26,6 +26,27 @@
   flex-direction: column;
   padding-bottom: 72px; /* Space for bottom nav */
   background: var(--bg-primary, var(--tg-theme-bg-color, #FFFBF5));
+  animation: fadeIn 0.2s ease-out;
+}
+
+/* Smooth fade-in animation for app content */
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* Loading screen - no animation, stays visible */
+.app-loading {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-primary, var(--tg-theme-bg-color, #FFFBF5));
 }
 
 /* Bottom navigation - Neobrutalism style */

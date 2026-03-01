@@ -323,6 +323,29 @@ export const ChevronLeftIcon: React.FC<IconProps> = ({
   </svg>
 );
 
+/** Chevron pointing down - for dropdowns */
+export const ChevronDownIcon: React.FC<IconProps> = ({
+  className,
+  size = defaultProps.size,
+  strokeWidth = defaultProps.strokeWidth,
+  style
+}) => (
+  <svg
+    width={size}
+    height={size}
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth={strokeWidth}
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    className={className}
+    style={style}
+  >
+    <polyline points="6 9 12 15 18 9" />
+  </svg>
+);
+
 /** Trash can - for delete actions */
 export const TrashIcon: React.FC<IconProps> = ({
   className,
@@ -838,6 +861,30 @@ export const EnrichIcon: React.FC<IconProps> = ({
     <path d="M5.64 5.64l2.83 2.83m7.07 7.07l2.83 2.83M5.64 18.36l2.83-2.83m7.07-7.07l2.83-2.83" />
     {/* Center dot */}
     <circle cx="12" cy="12" r="2" fill="currentColor" />
+  </svg>
+);
+
+/** Copy - for clipboard copy */
+export const CopyIcon: React.FC<IconProps> = ({
+  className,
+  size = defaultProps.size,
+  strokeWidth = defaultProps.strokeWidth,
+  style
+}) => (
+  <svg
+    width={size}
+    height={size}
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth={strokeWidth}
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    className={className}
+    style={style}
+  >
+    <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+    <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
   </svg>
 );
 

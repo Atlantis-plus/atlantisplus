@@ -1,9 +1,10 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '../hooks/useAuth';
 import { api } from '../lib/api';
+import type { CommunityMembership } from '../lib/api';
 import {
-  ChevronLeftIcon, UserIcon, TrashIcon, SpinnerIcon,
-  CheckCircleIcon, ErrorCircleIcon, MicrophoneIcon, TextIcon
+  ChevronLeftIcon, ChevronDownIcon, UserIcon, TrashIcon, SpinnerIcon,
+  CheckCircleIcon, ErrorCircleIcon, MicrophoneIcon, TextIcon, CommunityIcon
 } from '../components/icons';
 
 interface SelfAssertion {
@@ -22,7 +23,9 @@ interface SelfProfile {
 
 interface SelfProfilePageProps {
   communityId?: string;
+  communities?: CommunityMembership[];
   onBack?: () => void;
+  onCommunityChange?: (communityId: string) => void;
 }
 
 // Helper to format predicate for display
@@ -56,11 +59,15 @@ const getPredicateBadgeClass = (predicate: string): string => {
   return `${baseClass} ${colors[predicate] || 'bg-neo-gray-200'} text-black`;
 };
 
-export const SelfProfilePage = ({ communityId, onBack }: SelfProfilePageProps) => {
+export const SelfProfilePage = ({ communityId, communities = [], onBack, onCommunityChange }: SelfProfilePageProps) => {
   const { isAuthenticated } = useAuth();
   const [profile, setProfile] = useState<SelfProfile | null>(null);
   const [loading, setLoading] = useState(true);
   const [_error, setError] = useState<string | null>(null);
+
+  // Community selector state
+  const [selectedCommunityId, setSelectedCommunityId] = useState<string | undefined>(communityId);
+  const [showCommunitySelector, setShowCommunitySelector] = useState(false);
 
   // Add/edit state
   const [isAdding, setIsAdding] = useState(false);
@@ -76,20 +83,41 @@ export const SelfProfilePage = ({ communityId, onBack }: SelfProfilePageProps) =
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [deleting, setDeleting] = useState(false);
 
+  // Sync with prop changes
   useEffect(() => {
-    if (isAuthenticated && communityId) {
+    if (communityId && communityId !== selectedCommunityId) {
+      setSelectedCommunityId(communityId);
+    }
+  }, [communityId]);
+
+  useEffect(() => {
+    if (isAuthenticated && selectedCommunityId) {
       fetchProfile();
     }
-  }, [isAuthenticated, communityId]);
+  }, [isAuthenticated, selectedCommunityId]);
+
+  // Handle community selection
+  const handleCommunitySelect = (id: string) => {
+    setSelectedCommunityId(id);
+    setShowCommunitySelector(false);
+    setProfile(null); // Reset profile when switching
+    setSubmitResult(null); // Clear any messages
+    onCommunityChange?.(id);
+  };
+
+  // Get current community name
+  const currentCommunityName = communities.find(c => c.community_id === selectedCommunityId)?.name
+    || profile?.community_name
+    || 'Community';
 
   const fetchProfile = async () => {
-    if (!communityId) return;
+    if (!selectedCommunityId) return;
 
     setLoading(true);
     setError(null);
 
     try {
-      const result = await api.getSelfProfile(communityId);
+      const result = await api.getSelfProfile(selectedCommunityId);
       setProfile(result);
     } catch (err) {
       // 404 or null means no profile yet - that's OK
@@ -103,13 +131,13 @@ export const SelfProfilePage = ({ communityId, onBack }: SelfProfilePageProps) =
   };
 
   const handleSubmitText = async () => {
-    if (!textInput.trim() || !communityId) return;
+    if (!textInput.trim() || !selectedCommunityId) return;
 
     setSubmitting(true);
     setSubmitResult(null);
 
     try {
-      const result = await api.createOrUpdateProfile(communityId, textInput);
+      const result = await api.createOrUpdateProfile(selectedCommunityId, textInput);
       setSubmitResult({
         success: true,
         message: `Profile ${profile ? 'updated' : 'created'}! Added ${result.assertions_created} facts.`
@@ -139,12 +167,12 @@ export const SelfProfilePage = ({ communityId, onBack }: SelfProfilePageProps) =
   };
 
   const handleDelete = async () => {
-    if (!communityId) return;
+    if (!selectedCommunityId) return;
 
     setDeleting(true);
 
     try {
-      await api.deleteSelfProfile(communityId);
+      await api.deleteSelfProfile(selectedCommunityId);
       setProfile(null);
       setShowDeleteConfirm(false);
       setSubmitResult({
@@ -180,6 +208,54 @@ export const SelfProfilePage = ({ communityId, onBack }: SelfProfilePageProps) =
     );
   }
 
+  // Community selector component (reusable)
+  const CommunitySelectorCard = () => {
+    if (communities.length <= 1) return null;
+
+    return (
+      <div className="card-neo p-4 mb-4">
+        <div className="flex items-center gap-2 mb-3">
+          <CommunityIcon size={18} className="text-[var(--text-muted)]" />
+          <span className="text-sm font-semibold text-[var(--text-muted)]">
+            Your Communities ({communities.length})
+          </span>
+        </div>
+
+        <button
+          className="btn-neo w-full flex items-center justify-between px-4 py-3"
+          onClick={() => setShowCommunitySelector(!showCommunitySelector)}
+        >
+          <span className="font-semibold">{currentCommunityName}</span>
+          <ChevronDownIcon
+            size={18}
+            className={`transition-transform ${showCommunitySelector ? 'rotate-180' : ''}`}
+          />
+        </button>
+
+        {showCommunitySelector && (
+          <div className="mt-2 space-y-2">
+            {communities.map((c) => (
+              <button
+                key={c.community_id}
+                className={`w-full text-left px-4 py-3 border-2 border-black transition-all ${
+                  c.community_id === selectedCommunityId
+                    ? 'bg-[var(--accent-primary)] text-white font-semibold'
+                    : 'bg-[var(--bg-secondary)] hover:bg-[var(--bg-card)]'
+                }`}
+                onClick={() => handleCommunitySelect(c.community_id)}
+              >
+                <div className="font-semibold">{c.name}</div>
+                <div className="text-xs opacity-75">
+                  Joined {new Date(c.joined_at).toLocaleDateString()}
+                </div>
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  };
+
   // No profile yet - show create prompt
   if (!profile && !isAdding) {
     return (
@@ -199,11 +275,14 @@ export const SelfProfilePage = ({ communityId, onBack }: SelfProfilePageProps) =
         </header>
 
         <main className="p-4 pb-24">
+          {/* Community selector */}
+          <CommunitySelectorCard />
+
           <div className="card-neo p-6 text-center">
             <UserIcon size={64} className="mx-auto mb-4 text-[var(--text-muted)]" />
             <h2 className="font-heading text-xl font-bold mb-2">No profile yet</h2>
             <p className="text-[var(--text-muted)] mb-6">
-              Introduce yourself to the community so others can find you.
+              Introduce yourself to <strong>{currentCommunityName}</strong> so others can find you.
             </p>
             <button
               className="btn-neo btn-neo-primary w-full"
@@ -363,6 +442,9 @@ I'm looking for: [connections, opportunities]"
       </header>
 
       <main className="p-4 pb-24 space-y-4">
+        {/* Community selector */}
+        <CommunitySelectorCard />
+
         {/* Result message */}
         {submitResult && (
           <div className={`card-neo p-3 flex items-center gap-2 ${

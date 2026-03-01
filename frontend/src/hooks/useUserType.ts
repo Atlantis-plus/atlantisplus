@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { api } from '../lib/api';
 import type { UserInfo } from '../lib/api';
 
@@ -25,17 +25,25 @@ export const useUserType = (): UseUserTypeResult => {
   const [userInfo, setUserInfo] = useState<UserInfo | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // Track if we've already fetched to prevent duplicate requests
+  const hasFetched = useRef(false);
 
   const fetchUserInfo = useCallback(async () => {
     // Only fetch if we have an access token
     if (!api.hasAccessToken()) {
       console.log('[useUserType] No access token yet, skipping fetch');
-      setLoading(false);
+      // Keep loading true - we're waiting for token
+      return;
+    }
+
+    // Prevent duplicate fetches
+    if (hasFetched.current) {
+      console.log('[useUserType] Already fetched, skipping');
       return;
     }
 
     console.log('[useUserType] Fetching user info...');
-    setLoading(true);
+    hasFetched.current = true;
     setError(null);
 
     try {
@@ -45,44 +53,43 @@ export const useUserType = (): UseUserTypeResult => {
     } catch (err) {
       console.error('[useUserType] Failed to fetch user info:', err);
       setError(err instanceof Error ? err.message : 'Failed to get user info');
+      // Reset flag so retry can work
+      hasFetched.current = false;
     } finally {
       setLoading(false);
     }
   }, []);
 
-  // Initial fetch
+  // Subscribe to token availability using event-based approach (no polling)
   useEffect(() => {
-    fetchUserInfo();
+    // If token is already available, fetch immediately
+    if (api.hasAccessToken()) {
+      fetchUserInfo();
+      return;
+    }
+
+    // Otherwise, wait for token to become available
+    console.log('[useUserType] Waiting for access token...');
+    const unsubscribe = api.onTokenAvailable(() => {
+      console.log('[useUserType] Token now available, fetching...');
+      fetchUserInfo();
+    });
+
+    return unsubscribe;
   }, [fetchUserInfo]);
 
-  // Re-fetch when access token becomes available
-  // Poll briefly to catch when useAuth sets the token
-  useEffect(() => {
-    if (userInfo) return; // Already have data
-
-    let attempts = 0;
-    const maxAttempts = 10;
-
-    const interval = setInterval(() => {
-      attempts++;
-      if (api.hasAccessToken() && !userInfo) {
-        console.log('[useUserType] Token now available, fetching...');
-        fetchUserInfo();
-        clearInterval(interval);
-      } else if (attempts >= maxAttempts) {
-        console.log('[useUserType] Max attempts reached, stopping poll');
-        clearInterval(interval);
-      }
-    }, 200);
-
-    return () => clearInterval(interval);
-  }, [fetchUserInfo, userInfo]);
+  // Manual refetch (resets hasFetched flag)
+  const refetch = useCallback(async () => {
+    hasFetched.current = false;
+    setLoading(true);
+    await fetchUserInfo();
+  }, [fetchUserInfo]);
 
   return {
     userType: userInfo?.user_type || null,
     userInfo,
     loading,
     error,
-    refetch: fetchUserInfo
+    refetch
   };
 };

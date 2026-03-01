@@ -62,11 +62,9 @@ function App() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-[var(--bg-primary)] flex items-center justify-center">
-        <div className="text-center">
-          <SpinnerIcon size={32} className="mx-auto mb-4 text-[var(--accent-primary)]" />
-          <p className="text-[var(--text-muted)]">Loading...</p>
-        </div>
+      <div className="app-loading">
+        <SpinnerIcon size={32} className="mx-auto mb-4 text-[var(--accent-primary)]" />
+        <p className="text-[var(--text-muted)]">Loading...</p>
       </div>
     );
   }
@@ -82,6 +80,8 @@ function App() {
       <div className="app">
         <SelfProfilePage
           communityId={selfProfileCommunityId || undefined}
+          communities={userInfo?.communities_member || []}
+          onCommunityChange={(id) => setSelfProfileCommunityId(id)}
         />
       </div>
     );
@@ -99,6 +99,8 @@ function App() {
         return (
           <SelfProfilePage
             communityId={selfProfileCommunityId || undefined}
+            communities={userInfo?.communities_member || []}
+            onCommunityChange={(id) => setSelfProfileCommunityId(id)}
             onBack={() => setCurrentPage('people')}
           />
         );

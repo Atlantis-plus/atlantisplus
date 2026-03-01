@@ -1,7 +1,10 @@
 import { useState, useEffect } from 'react';
 import { api } from '../lib/api';
 import type { Community, CommunityMember } from '../lib/api';
-import { SpinnerIcon, PeopleIcon } from '../components/icons';
+import {
+  SpinnerIcon, PeopleIcon, ChevronLeftIcon, CopyIcon,
+  CheckCircleIcon, RefreshIcon, ErrorCircleIcon
+} from '../components/icons';
 
 interface CommunityDetailPageProps {
   communityId: string;
@@ -68,7 +71,7 @@ export function CommunityDetailPage({ communityId, onBack }: CommunityDetailPage
 
   if (loading) {
     return (
-      <div className="page-container">
+      <div className="min-h-screen bg-[var(--bg-primary)]">
         <div className="flex items-center justify-center py-12">
           <SpinnerIcon size={32} className="text-[var(--accent-primary)]" />
         </div>
@@ -78,15 +81,16 @@ export function CommunityDetailPage({ communityId, onBack }: CommunityDetailPage
 
   if (error || !community) {
     return (
-      <div className="page-container">
-        <div className="text-center py-12">
-          <p className="text-[var(--text-error)] mb-4">{error || 'Community not found'}</p>
-          <button
-            onClick={onBack}
-            className="px-4 py-2 bg-[var(--accent-primary)] text-white rounded-lg"
-          >
-            Back
-          </button>
+      <div className="min-h-screen bg-[var(--bg-primary)]">
+        <div className="p-4">
+          <div className="card-neo p-8 text-center">
+            <ErrorCircleIcon size={48} className="mx-auto mb-4 text-coral" />
+            <p className="text-coral mb-4">{error || 'Community not found'}</p>
+            <button onClick={onBack} className="btn-neo">
+              <ChevronLeftIcon size={18} />
+              Back
+            </button>
+          </div>
         </div>
       </div>
     );
@@ -95,133 +99,161 @@ export function CommunityDetailPage({ communityId, onBack }: CommunityDetailPage
   const inviteLink = `https://t.me/atlantisplus_bot?start=join_${community.invite_code}`;
 
   return (
-    <div className="page-container">
-      {/* Header with back button */}
-      <div className="flex items-center gap-3 mb-4">
-        <button
-          onClick={onBack}
-          className="p-2 rounded-lg hover:bg-[var(--bg-hover)] text-[var(--text-secondary)]"
-        >
-          ←
-        </button>
-        <h1 className="page-title flex-1">{community.name}</h1>
-      </div>
-
-      {/* Community info */}
-      <div className="bg-[var(--bg-secondary)] rounded-xl p-4 border border-[var(--border-color)] mb-4">
-        {community.description && (
-          <p className="text-[var(--text-secondary)] mb-3">{community.description}</p>
-        )}
-
-        <div className="space-y-2">
-          <div className="flex items-center justify-between">
-            <span className="text-sm text-[var(--text-muted)]">Invite link:</span>
-            <div className="flex items-center gap-2">
-              <code className="text-xs bg-[var(--bg-tertiary)] px-2 py-1 rounded">
-                {inviteLink.length > 40 ? `...${inviteLink.slice(-35)}` : inviteLink}
-              </code>
-              <button
-                onClick={copyInviteLink}
-                className="px-2 py-1 text-xs bg-[var(--accent-primary)] text-white rounded"
-              >
-                {copiedLink ? 'Copied!' : 'Copy'}
-              </button>
-            </div>
-          </div>
-
-          <div className="flex items-center justify-between">
-            <span className="text-sm text-[var(--text-muted)]">Members:</span>
-            <span className="text-sm font-medium">{members.length}</span>
-          </div>
-
+    <div className="min-h-screen bg-[var(--bg-primary)]">
+      {/* Header */}
+      <header className="sticky top-0 z-10 bg-[var(--bg-primary)] border-b-3 border-black p-4">
+        <div className="flex items-center gap-3">
           <button
-            onClick={regenerateInvite}
-            disabled={regenerating}
-            className="w-full mt-2 px-3 py-2 text-sm bg-[var(--bg-tertiary)] text-[var(--text-secondary)] rounded-lg hover:bg-[var(--bg-hover)] disabled:opacity-50"
+            className="btn-neo p-2 flex-shrink-0"
+            onClick={onBack}
+            aria-label="Back"
           >
-            {regenerating ? 'Regenerating...' : 'Regenerate Invite Link'}
+            <ChevronLeftIcon size={20} />
           </button>
+          <div className="flex-1 min-w-0">
+            <h1 className="font-heading text-xl font-bold truncate">{community.name}</h1>
+            <p className="text-sm text-[var(--text-muted)]">
+              {members.length} member{members.length !== 1 ? 's' : ''}
+            </p>
+          </div>
         </div>
-      </div>
+      </header>
 
-      {/* Members list */}
-      <div className="mb-4">
-        <h2 className="text-lg font-semibold text-[var(--text-primary)] mb-3 flex items-center gap-2">
-          <PeopleIcon size={20} />
-          Members ({members.length})
-        </h2>
+      <main className="p-4 pb-24 space-y-4">
+        {/* Community info card */}
+        <div className="card-neo p-4">
+          {community.description && (
+            <p className="text-[var(--text-secondary)] mb-4">{community.description}</p>
+          )}
 
-        {members.length === 0 ? (
-          <div className="text-center py-8 text-[var(--text-muted)]">
-            <p>No members yet</p>
-            <p className="text-sm mt-1">Share the invite link to get started</p>
-          </div>
-        ) : (
+          {/* Invite link section */}
           <div className="space-y-3">
-            {members.map((member) => {
-              const { role, offers, seeks } = formatAssertions(member.assertions);
-
-              return (
-                <div
-                  key={member.person_id}
-                  className="bg-[var(--bg-secondary)] rounded-xl p-4 border border-[var(--border-color)]"
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-sm text-[var(--text-muted)]">Invite link:</span>
+              <div className="flex items-center gap-2">
+                <code className="text-xs bg-[var(--bg-secondary)] border-2 border-black px-2 py-1 truncate max-w-[180px]">
+                  {inviteLink.length > 35 ? `...${inviteLink.slice(-30)}` : inviteLink}
+                </code>
+                <button
+                  onClick={copyInviteLink}
+                  className="btn-neo p-2"
+                  title="Copy invite link"
                 >
-                  <div className="flex items-start justify-between">
-                    <div>
-                      <h3 className="font-semibold text-[var(--text-primary)]">
-                        {member.display_name}
-                      </h3>
-                      {role && (
-                        <p className="text-sm text-[var(--text-secondary)] mt-1">
-                          {role}
-                        </p>
-                      )}
-                    </div>
-                    <span className="text-xs text-[var(--text-muted)]">
-                      {new Date(member.created_at).toLocaleDateString()}
-                    </span>
-                  </div>
-
-                  {(offers.length > 0 || seeks.length > 0) && (
-                    <div className="mt-3 space-y-2">
-                      {offers.length > 0 && (
-                        <div>
-                          <span className="text-xs text-[var(--text-muted)]">Can help with:</span>
-                          <div className="flex flex-wrap gap-1 mt-1">
-                            {offers.map((offer, i) => (
-                              <span
-                                key={i}
-                                className="px-2 py-0.5 text-xs bg-green-500/10 text-green-600 rounded-full"
-                              >
-                                {offer}
-                              </span>
-                            ))}
-                          </div>
-                        </div>
-                      )}
-                      {seeks.length > 0 && (
-                        <div>
-                          <span className="text-xs text-[var(--text-muted)]">Looking for:</span>
-                          <div className="flex flex-wrap gap-1 mt-1">
-                            {seeks.map((seek, i) => (
-                              <span
-                                key={i}
-                                className="px-2 py-0.5 text-xs bg-blue-500/10 text-blue-600 rounded-full"
-                              >
-                                {seek}
-                              </span>
-                            ))}
-                          </div>
-                        </div>
-                      )}
-                    </div>
+                  {copiedLink ? (
+                    <CheckCircleIcon size={16} className="text-green-600" />
+                  ) : (
+                    <CopyIcon size={16} />
                   )}
-                </div>
-              );
-            })}
+                </button>
+              </div>
+            </div>
+
+            <button
+              onClick={regenerateInvite}
+              disabled={regenerating}
+              className="btn-neo w-full flex items-center justify-center gap-2"
+            >
+              {regenerating ? (
+                <>
+                  <SpinnerIcon size={16} />
+                  Regenerating...
+                </>
+              ) : (
+                <>
+                  <RefreshIcon size={16} />
+                  Regenerate Invite Link
+                </>
+              )}
+            </button>
           </div>
-        )}
-      </div>
+        </div>
+
+        {/* Members section */}
+        <div className="card-neo p-4">
+          <h2 className="font-heading font-bold text-lg mb-3 flex items-center gap-2">
+            <PeopleIcon size={20} />
+            Members ({members.length})
+          </h2>
+
+          {members.length === 0 ? (
+            <div className="text-center py-6 text-[var(--text-muted)]">
+              <PeopleIcon size={32} className="mx-auto mb-2 opacity-50" />
+              <p>No members yet</p>
+              <p className="text-sm mt-1">Share the invite link to get started</p>
+            </div>
+          ) : (
+            <ul className="space-y-3">
+              {members.map((member) => {
+                const { role, offers, seeks } = formatAssertions(member.assertions);
+
+                return (
+                  <li
+                    key={member.person_id}
+                    className="bg-[var(--bg-secondary)] border-2 border-black p-3"
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="flex items-start gap-3 flex-1 min-w-0">
+                        {/* Avatar */}
+                        <div className="w-10 h-10 flex-shrink-0 flex items-center justify-center text-sm font-bold border-2 border-black bg-mint">
+                          {member.display_name.charAt(0).toUpperCase()}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <h3 className="font-semibold truncate">
+                            {member.display_name}
+                          </h3>
+                          {role && (
+                            <p className="text-sm text-[var(--text-secondary)] truncate mt-0.5">
+                              {role}
+                            </p>
+                          )}
+                        </div>
+                      </div>
+                      <span className="text-xs text-[var(--text-muted)] flex-shrink-0">
+                        {new Date(member.created_at).toLocaleDateString()}
+                      </span>
+                    </div>
+
+                    {(offers.length > 0 || seeks.length > 0) && (
+                      <div className="mt-3 space-y-2">
+                        {offers.length > 0 && (
+                          <div>
+                            <span className="text-xs text-[var(--text-muted)]">Can help with:</span>
+                            <div className="flex flex-wrap gap-1 mt-1">
+                              {offers.map((offer, i) => (
+                                <span
+                                  key={i}
+                                  className="badge-neo badge-neo-success text-xs"
+                                >
+                                  {offer}
+                                </span>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                        {seeks.length > 0 && (
+                          <div>
+                            <span className="text-xs text-[var(--text-muted)]">Looking for:</span>
+                            <div className="flex flex-wrap gap-1 mt-1">
+                              {seeks.map((seek, i) => (
+                                <span
+                                  key={i}
+                                  className="badge-neo badge-neo-primary text-xs"
+                                >
+                                  {seek}
+                                </span>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </div>
+      </main>
     </div>
   );
 }
